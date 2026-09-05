@@ -34,9 +34,12 @@
   #panel{position:fixed;left:0;right:0;bottom:0;z-index:1200;background:var(--panel-bg);color:var(--panel-fg);
     border-top:1px solid var(--border);border-radius:16px 16px 0 0;
     padding:10px 12px calc(env(safe-area-inset-bottom) + 10px);box-shadow:0 -6px 24px #0006}
-  #hint{font-size:12.5px;font-weight:600;margin-bottom:8px;line-height:1.5;color:var(--panel-sub)}
+  #hint{font-size:12px;font-weight:600;margin-bottom:8px;line-height:1.5;color:var(--panel-sub)}
   #hint b{color:var(--panel-fg)}
-  #hint .k{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin:0 3px 0 8px;border:1px solid #0003}
+  #hint .k{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin:0 3px 0 6px;border:1px solid #0003}
+  #forecast{font-size:13px;line-height:1.6;margin-bottom:8px;padding:8px 10px;border-radius:9px;
+    background:var(--btn-bg);border:1px solid var(--border)}
+  #forecast[hidden]{display:none}
 
   .tl-row{display:flex;align-items:center;gap:10px}
   #play{flex:0 0 auto;width:46px;height:46px;border-radius:50%;border:1px solid var(--border);background:var(--btn-bg);
@@ -90,16 +93,17 @@
 <div id="toast" hidden></div>
 
 <div id="legend" hidden>
-  <h4>降水強度</h4>
+  <h4>雷達回波強度</h4>
   <div id="legend-rows"></div>
-  <div style="margin-top:6px;color:var(--panel-sub)">資料：RainViewer（僅觀測，無未來預報）</div>
+  <div style="margin-top:6px;color:var(--panel-sub)">資料：中央氣象署 整合雷達回波圖（僅觀測）</div>
 </div>
 
 <div id="panel">
+  <div id="forecast" hidden></div>
   <div id="hint">
-    <b>看法</b>：<span class="k" style="background:#1d6fe0"></span>你的位置
-    <span class="k" style="background:#ff8f00"></span>照現在方向速度推算的前方位置。
-    播放時間軸看雨帶往哪移動，目測會不會掃到你。<b>台灣沒有未來雷達預報，只有觀測。</b>
+    <span class="k" style="background:#1d6fe0"></span>你的位置
+    <span class="k" style="background:#ff8f00"></span>推算的前方位置。
+    播放時間軸看雨帶往哪移動。<b>台灣沒有未來雷達動畫，只有觀測回波＋上面的鄉鎮降雨機率預報。</b>
   </div>
   <div class="tl-row">
     <button id="play" aria-label="播放">▶</button>
@@ -119,23 +123,27 @@
 "use strict";
 
 /* ───────────────────────── 常數 ───────────────────────── */
-/* 雷達資料源：RainViewer（全球通用、免金鑰、座標正確的地圖圖磚）。
-   台灣中央氣象署的雷達合成圖精度更高，但它是「海報式」固定範圍圖、投影對不齊，
-   要正規 GeoTIFF（opendata 需 API key）才能精準疊圖 —— 留到 v1b。 */
+/* 雷達：中央氣象署 O-A0058-003 整合回波圖，由 GitHub Actions 每 ~12 分抓一張、
+   透明化、存進孤兒分支 data，這裡從 raw.githubusercontent.com 讀（有 CORS）。
+   RainViewer 當 data 分支還沒建好 / 抓失敗時的後備。 */
+const DATA_BASE = 'https://raw.githubusercontent.com/ymeroom/biking-gps-weather-tw/data/';
 const RV_MANIFEST = 'https://api.rainviewer.com/public/weather-maps.json';
 const RADAR_OPACITY = 0.62;
-const RADAR_REFRESH_MS = 180000;   // 每 3 分重抓 manifest（RainViewer 約 10 分更新）
+const RADAR_REFRESH_MS = 180000;   // 每 3 分重抓
+const FORECAST_REFRESH_MS = 900000; // 每 15 分重抓鄉鎮預報（CWA 約 6 小時更新一次）
 const GHOST_MINS = [10, 20, 30];   // 前方位置參考點（分鐘）
-const RV_MAX_NATIVE_ZOOM = 7;      // RainViewer 雷達圖磚原生上限，超過用內插放大
+const RV_MAX_NATIVE_ZOOM = 7;
 
-/* RainViewer 色階（color scheme 4「Universal Blue」對應的降水強度）：[R,G,B, 標籤, 白話] */
-const RV_SCALE = [
-  [ 90, 180, 255, '很弱', '毛毛雨'],
-  [ 60, 130, 240, '弱',   '小雨'],
-  [ 40, 200,  90, '中',   '中雨'],
-  [245, 220,  60, '強',   '大雨'],
-  [240, 140,  50, '很強', '大雨→豪雨'],
-  [225,  60,  60, '劇烈', '豪雨以上'],
+/* 中央氣象署 雷達回波 dBZ 標準色階（取自 colorbar_n.png）：[R,G,B, dBZ, 白話] */
+const CWA_SCALE = [
+  [  0, 200, 255, '≤15',  '毛毛雨'],
+  [  0,  91, 255, '15–25', '小雨'],
+  [  0, 200,   0, '25–35', '中雨'],
+  [255, 255,   0, '35–40', '大雨'],
+  [255, 152,   0, '40–45', '大雨→豪雨'],
+  [255,   0,   0, '45–55', '豪雨'],
+  [180,   0,   0, '55–60', '大豪雨'],
+  [255,   0, 255, '≥60',  '劇烈'],
 ];
 
 /* ───────────────────────── 狀態 ───────────────────────── */
@@ -223,6 +231,7 @@ function onPos(p){
   } else spdChip.hidden = true;
 
   updateGhosts();
+  renderForecast();
 }
 function onPosErr(e){
   const msg = e.code === 1 ? '定位權限被拒 —— 請到瀏覽器設定開啟此網站的定位權限'
@@ -259,34 +268,55 @@ function updateGhosts(){
   });
 }
 
-/* ───────────────────────── RainViewer 雷達圖層 ───────────────────────── */
+/* ───────────────────────── 雷達圖層（CWA 主，RainViewer 後備）───────────────────────── */
+let radarMode = 'cwa';        // 'cwa' | 'rv'
+let cwaBounds = [[20.5,118.0],[26.5,124.0]];
 let rvHost = '';
+
 async function loadRadarIndex(){
+  // 先試 CWA data 分支
   try{
-    const data = await fetch(RV_MANIFEST, {cache:'no-store'}).then(r => r.json());
-    rvHost = data.host;
-    const past = (data.radar && data.radar.past || []).map(o => ({
-      path: o.path, ms: o.time * 1000, label: twLabel(o.time * 1000),
-    }));
-    if(!past.length) throw new Error('RainViewer 沒有回傳影格');
-    past.sort((a,b) => a.ms - b.ms);           // 由舊到新
-
-    const prevMs = state.frames[state.idx] ? state.frames[state.idx].ms : null;
-    const wasAtNewest = !state.frames.length || state.idx === state.frames.length - 1;
-    state.frames = past;
-
-    let target = past.length - 1;
-    if(!wasAtNewest && prevMs != null){
-      let g = Infinity;
-      past.forEach((f,i) => { const d = Math.abs(f.ms - prevMs); if(d < g){ g = d; target = i; } });
+    const idx = await fetch(DATA_BASE + 'radar/index.json', {cache:'no-store'}).then(r => {
+      if(!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+    });
+    if(!idx.frames || !idx.frames.length) throw new Error('無影格');
+    cwaBounds = idx.bounds || cwaBounds;
+    radarMode = 'cwa';
+    const frames = idx.frames
+      .map(o => ({ url: DATA_BASE + 'radar/' + o.file, ms: o.ms, label: twLabel(o.ms) }))
+      .sort((a,b) => a.ms - b.ms);
+    adoptFrames(frames);
+    return;
+  }catch(cwaErr){
+    // 後備：RainViewer
+    try{
+      const data = await fetch(RV_MANIFEST, {cache:'no-store'}).then(r => r.json());
+      rvHost = data.host;
+      radarMode = 'rv';
+      const frames = (data.radar && data.radar.past || [])
+        .map(o => ({ path: o.path, ms: o.time * 1000, label: twLabel(o.time * 1000) }))
+        .sort((a,b) => a.ms - b.ms);
+      if(!frames.length) throw new Error('RainViewer 無影格');
+      adoptFrames(frames);
+      document.getElementById('chip-cwa').innerHTML += '<span style="opacity:.7">（後備源）</span>';
+    }catch(rvErr){
+      document.getElementById('chip-cwa').innerHTML = '雷達：<b style="color:#ff9a9a">失敗</b>';
+      toast('⚠️ 取不到雷達資料。CWA：' + cwaErr.message + '；RainViewer：' + rvErr.message, 6000);
     }
-    document.getElementById('slider').max = past.length - 1;
-    document.getElementById('chip-cwa').innerHTML = '雷達：<b>' + past[past.length-1].label + ' 更新</b>';
-    showFrame(target);
-  }catch(err){
-    document.getElementById('chip-cwa').innerHTML = '雷達：<b style="color:#ff9a9a">失敗</b>';
-    toast('⚠️ 取不到雷達資料（' + err.message + '）。可能離線，或 RainViewer 暫時無回應。', 6000);
   }
+}
+function adoptFrames(frames){
+  const prevMs = state.frames[state.idx] ? state.frames[state.idx].ms : null;
+  const wasAtNewest = !state.frames.length || state.idx === state.frames.length - 1;
+  state.frames = frames;
+  let target = frames.length - 1;
+  if(!wasAtNewest && prevMs != null){
+    let g = Infinity;
+    frames.forEach((f,i) => { const d = Math.abs(f.ms - prevMs); if(d < g){ g = d; target = i; } });
+  }
+  document.getElementById('slider').max = frames.length - 1;
+  document.getElementById('chip-cwa').innerHTML = '雷達：<b>' + frames[frames.length-1].label + ' 更新</b>';
+  showFrame(target);
 }
 function showFrame(i){
   if(!state.frames.length) return;
@@ -295,16 +325,75 @@ function showFrame(i){
   const f = state.frames[state.idx];
 
   const prev = radarLayer;
-  radarLayer = L.tileLayer(rvHost + f.path + '/256/{z}/{x}/{y}/4/1_1.png', {
-    opacity: RADAR_OPACITY, zIndex: 400, maxNativeZoom: RV_MAX_NATIVE_ZOOM, maxZoom: 19,
-  }).addTo(map);
+  if(radarMode === 'cwa'){
+    radarLayer = L.imageOverlay(f.url, cwaBounds, {opacity: RADAR_OPACITY, zIndex: 400, interactive: false});
+  } else {
+    radarLayer = L.tileLayer(rvHost + f.path + '/256/{z}/{x}/{y}/4/1_1.png', {
+      opacity: RADAR_OPACITY, zIndex: 400, maxNativeZoom: RV_MAX_NATIVE_ZOOM, maxZoom: 19,
+    });
+  }
+  radarLayer.addTo(map);
   const dropPrev = () => { if(prev && prev !== radarLayer && map.hasLayer(prev)) map.removeLayer(prev); };
   radarLayer.once('load', dropPrev);
-  setTimeout(dropPrev, 2000);
+  setTimeout(dropPrev, 2500);
 
   const agoMin = Math.round((Date.now() - f.ms) / 60000);
   const rel = agoMin <= 1 ? '最新' : agoMin + ' 分前';
   document.getElementById('time-label').innerHTML = f.label + '<small>' + rel + ' · 觀測</small>';
+}
+
+/* ───────────────────────── 前方鄉鎮降雨預報面板 ───────────────────────── */
+let forecastData = null;
+async function loadForecast(){
+  try{
+    const fc = await fetch(DATA_BASE + 'forecast.json', {cache:'no-store'}).then(r => {
+      if(!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+    });
+    forecastData = fc.counties || [];
+    renderForecast();
+  }catch(_){ /* data 分支還沒建好就先空著 */ }
+}
+function nearestCounty(lat, lon){
+  if(!forecastData || !forecastData.length) return null;
+  let best = null, bd = Infinity;
+  for(const c of forecastData){
+    const d = (c.lat-lat)**2 + (c.lon-lon)**2;
+    if(d < bd){ bd = d; best = c; }
+  }
+  return best;
+}
+function slotNow(c){
+  if(!c || !c.slots) return null;
+  const now = Date.now();
+  return c.slots.find(s => Date.parse(s.e) > now) || c.slots[0];
+}
+function popTone(pop){
+  const n = +pop;
+  return n >= 70 ? '#c62828' : n >= 40 ? '#e07a00' : n >= 20 ? '#5b6b7f' : '#1b7a37';
+}
+function renderForecast(){
+  const el = document.getElementById('forecast');
+  if(!forecastData || !forecastData.length || !state.pos){ el.hidden = true; return; }
+  const here = nearestCounty(state.pos.lat, state.pos.lon);
+  const s = slotNow(here);
+  if(!here || !s){ el.hidden = true; return; }
+  let html = '<b>' + here.name + '</b> ' + (s.wx || '') +
+             ' ｜ 降雨機率 <b style="color:' + popTone(s.pop) + '">' + (s.pop==null?'—':s.pop+'%') + '</b>' +
+             ' <span style="color:var(--panel-sub)">(' + s.s.slice(11,16) + '–' + s.e.slice(11,16) + ')</span>';
+  // 前方（+30 分推算位置）若跨到別的縣市，也顯示
+  if(state.pos.speed != null && state.pos.speed >= 0.8 && state.pos.heading != null){
+    const d = state.pos.speed * 30 * 60;
+    const [flat, flon] = destPoint(state.pos.lat, state.pos.lon, state.pos.heading, d);
+    const ahead = nearestCounty(flat, flon);
+    if(ahead && ahead.name !== here.name){
+      const as = slotNow(ahead);
+      if(as) html += '<br><span style="color:var(--panel-sub)">前方 ' + ahead.name + '</span> ' + (as.wx||'') +
+        ' ｜ <b style="color:' + popTone(as.pop) + '">' + (as.pop==null?'—':as.pop+'%') + '</b>';
+    }
+  }
+  html += '<br><span style="color:var(--panel-sub);font-size:11px">中央氣象署鄉鎮預報（縣市級、每 3 小時、約 6 小時更新）</span>';
+  el.innerHTML = html;
+  el.hidden = false;
 }
 
 /* ───────────────────────── 播放 / 控制 ───────────────────────── */
@@ -357,8 +446,8 @@ document.addEventListener('visibilitychange', () => {
 
 /* 圖例 */
 (function buildLegend(){
-  document.getElementById('legend-rows').innerHTML = RV_SCALE.map(r =>
-    `<div class="row"><span class="sw" style="background:rgb(${r[0]},${r[1]},${r[2]})"></span>${r[3]} · ${r[4]}</div>`
+  document.getElementById('legend-rows').innerHTML = CWA_SCALE.map(r =>
+    `<div class="row"><span class="sw" style="background:rgb(${r[0]},${r[1]},${r[2]})"></span>${r[3]} dBZ · ${r[4]}</div>`
   ).join('');
 })();
 
@@ -383,8 +472,10 @@ setDarkBase(darkBase);
 reflectWakeBtn();
 startGeo();
 loadRadarIndex();
+loadForecast();
 requestWake();
-state.refreshTimer = setInterval(loadRadarIndex, RADAR_REFRESH_MS);
+setInterval(loadRadarIndex, RADAR_REFRESH_MS);
+setInterval(loadForecast, FORECAST_REFRESH_MS);
 </script>
 </body>
 </html>

@@ -5,3 +5,7 @@
 .DS_Store
 Thumbs.db
 scratch/
+scratch_*
+out/
+prev/
+cwa_fc_test.json

@@ -13,9 +13,13 @@
   而且**只有觀測、沒有未來預報**。
 - 要精準疊圖需要 CWA 開放資料的正規 GeoTIFF（需申請免費 API key）—— 留到 v1b。
 
-所以 **v1a 用 RainViewer**（全球通用、免金鑰、座標正確的地圖圖磚），
-給你「過去約 2 小時的觀測回波動畫」。解析度比 CWA 低（原生只到 zoom 7，放大後會糊），
-但位置是對的，「看雨帶往哪移動」這個核心需求做得到。
+**v1b（現行）**：GitHub Actions 每 ~12 分鐘抓 CWA 開放資料的
+`O-A0058-003`「雷達整合回波圖-臺灣(鄰近地區)_無地形」（有官方標註範圍、S3 直連有 CORS），
+透明化後存進孤兒分支 `data`，網站從 `raw.githubusercontent.com` 讀來做過去約 2–3 小時的動畫。
+另外抓 `F-D0047-089` 縣市 3 小時降雨機率預報，做成「你所在／前方縣市未來降雨機率」文字面板。
+CWA data 分支還沒建好或抓失敗時，自動退回 RainViewer。
+
+**v1a（初版，已被 v1b 取代）**：只有 RainViewer 觀測回波動畫。
 
 ## 使用方式
 
@@ -33,32 +37,43 @@
 - **橘色虛線點（+10/+20/+30 分）**：照你現在的方向與速度推算的前方位置。
   拿它去對照雷達回波，目測「我到那裡時雨帶到哪了」。靜止時不顯示。
 - **時間軸**：RainViewer 觀測回波，過去約 2 小時、每 10 分鐘一格，可播放。**沒有未來**。
-- **雷達 XX:XX 更新**：RainViewer 約每 10 分鐘更新，本 App 每 3 分鐘重抓。
+- **前方縣市降雨面板**：中央氣象署鄉鎮預報（縣市級、每 3 小時一格、約 6 小時更新一次）。
+  顯示你所在縣市當前 3 小時的降雨機率與天氣；若 +30 分推算位置跨到別的縣市，也一併顯示。
+  ⚠️ 這是**縣市級文字預報**，不是即時雷達，別混用。
+- **雷達 XX:XX 更新**：CWA 每 ~10 分鐘更新，GitHub Actions 每 ~12 分鐘抓，本 App 每 3 分鐘重讀。
 - **🌙 深色底圖 / 💡 螢幕常亮**：傍晚騎乘用。iOS Safari 沒有螢幕常亮 API，按鈕會顯示「不支援」，
   請改到 iPhone 設定 →「螢幕顯示與亮度」→「自動鎖定」調長或關掉。
 
 ## 技術
 
 - 單一 `index.html`，無 build step。Leaflet 1.9.4 + OpenStreetMap 底圖。
-- 雷達：RainViewer 公開 API
-  - manifest：`https://api.rainviewer.com/public/weather-maps.json`（`radar.past` 影格清單）
-  - 圖磚：`{host}{path}/256/{z}/{x}/{y}/4/1_1.png`（color scheme 4）
-  - `maxNativeZoom: 7` —— 超過原生 zoom 用內插放大。
+- **雷達**：CWA `O-A0058-003`（`https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-003.png`，
+  官方範圍 `118–124°E, 20.5–26.5°N`，S3 有 CORS）。
+  - `.github/workflows/fetch-cwa.yml` 每 ~12 分抓一張 → `scripts/fetch_cwa.py` 灰底透明化、縮 1800px
+    → force-push 到孤兒分支 `data`（永遠 1 個 commit，git 歷史不長胖），保留最近 18 張。
+  - 網站讀 `https://raw.githubusercontent.com/ymeroom/biking-gps-weather-tw/data/radar/index.json`
+    ＋ `.../data/forecast.json`（raw.githubusercontent 有 CORS）。
+  - CWA data 分支不可用時自動退回 RainViewer。
+- **預報**：`F-D0047-089` 縣市 3 小時降雨機率＋天氣現象（需 `CWA_KEY`，存在 repo 的 Actions secret）。
 - 深色底圖：純 CSS filter 反轉 OSM 圖磚，零外部相依。
 
-## 待辦（v1b，等 CWA opendata API key）
+## 部署 / 維護
 
-1. 申請免費 key：https://opendata.cwa.gov.tw/
-2. 用 CWA 開放資料的正規雷達 GeoTIFF 換掉 RainViewer（精度高很多、對台灣境內更準）
-3. 研究能拿到的最好的短期降雨預報產品（鄉鎮 3 小時預報 `F-D0047-*` / QPF / 劇烈天氣即時預報）
-4. 加「路線前方鄉鎮未來 1–3 小時降雨機率／雨量」文字面板 —— **不是雷達動畫**，
-   是鄉鎮級文字預報，UI 要誠實標示這個限制。
+- `CWA_KEY` 存在 GitHub repo 的 **Actions secret**（`gh secret set CWA_KEY`），不會出現在原始碼或 commit。
+- 手動觸發抓資料：`gh workflow run fetch-cwa.yml`（或 GitHub 網頁 Actions 頁）。
+- 若 CWA 改端點格式：改 `scripts/fetch_cwa.py`；若改 dBZ 色階：改 `index.html` 的 `CWA_SCALE`。
 
-## 不包含（v1a）
+## v1c 可能的下一步
+
+- 縣市級 → 鄉鎮級預報（要打 22 個 `F-D0047-001..-087` 分縣檔）
+- 研究 CWA 是否有更即時的 0–3 小時定量降水預報（QPF）可用
+- 沿實際路線（會轉彎）推算前方位置
+
+## 不包含
 
 - 台灣以外
 - 真正的「未來雷達回波動畫」（台灣沒有免費公開資料）
-- 沿實際路線推算、離線快取、航跡記錄
+- 離線快取、航跡記錄
 - 跟日本版共用 repo／程式
 
 計劃書在 `plans/`。

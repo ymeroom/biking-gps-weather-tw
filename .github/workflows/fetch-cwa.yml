@@ -1,0 +1,47 @@
+name: 抓 CWA 雷達與降雨預報
+
+on:
+  schedule:
+    - cron: "*/12 * * * *"     # 每 12 分鐘（GitHub 排程常延遲，實際約 12–25 分）
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cwa-data
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 取回上一輪 data 分支（帶過往雷達影格）
+        continue-on-error: true
+        run: |
+          git clone --branch data --single-branch --depth 1 \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" prev || mkdir -p prev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet pillow numpy
+
+      - name: 抓資料
+        env:
+          CWA_KEY: ${{ secrets.CWA_KEY }}
+        run: python scripts/fetch_cwa.py
+
+      - name: force-push 到孤兒分支 data
+        run: |
+          cd out
+          git init -q
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "cwa data $(date -u +%FT%TZ)"
+          git branch -M data
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" data
