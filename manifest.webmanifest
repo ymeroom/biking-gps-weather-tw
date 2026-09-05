@@ -1,0 +1,18 @@
+{
+  "name": "單車 GPS 降水地圖（台灣）",
+  "short_name": "單車雨雲TW",
+  "description": "騎車時看中央氣象署觀測雷達回波圖，藍點跟隨 GPS，播放看雨帶往哪移動。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
