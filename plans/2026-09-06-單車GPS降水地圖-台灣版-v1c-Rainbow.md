@@ -2,7 +2,7 @@
 
 > 建立時間：2026-09-06 01:25
 > 類型：新功能（在已上線的 v1b 上疊加）
-> 狀態：待執行（等使用者申請 Rainbow 免費 API key）
+> 狀態：Worker 已寫好（`worker/`），等使用者 `wrangler deploy` 後接前端
 > 溝通模式：半技術
 
 ---
@@ -22,20 +22,29 @@
 - 金鑰不能寫進公開的 `index.html`，所以要一個代理層。**Cloudflare Worker** 免費額度每天 10 萬次請求，
   剛好也順便解決 Rainbow 的 CORS 未知問題、加上「每日用量上限」保險。
 
-## 技術驗證（已查到的 Rainbow API 規格）
+## 技術驗證（已用真實金鑰打過，全部 200）
 
 | 項目 | 內容 |
 |:--|:--|
-| 圖磚端點 | `GET https://api.rainbow.ai/tiles/v1/precip/{snapshot}/{forecast_time}/{z}/{x}/{y}` |
-| | `precip` = 區域（有雷達處品質高）；`precip-global` = 全球後備 |
-| 未來影格 | `forecast_time` = 未來秒數，範圍 `[0, 14400]`、每 `600` 一格 → 0～4 小時、每 10 分鐘 |
-| 圖磚格式 | PNG、Web Mercator（EPSG:3857）、zoom 0–12 |
-| 快照清單 | `GET /tiles/v1/snapshot?layer=precip` → 回最新 snapshot（epoch 秒，對齊 10 分鐘）；過去可回溯 2 小時 |
-| 點位 nowcast | `GET https://api.rainbow.ai/nowcast/v1/precip/{lon}/{lat}` → `forecast[]`：`{precipRate, precipType, timestampBegin, timestampEnd}`，逐分鐘、未來 4 小時 |
-| 認證方式 | **文件未寫明 → Step 1 要先從 dashboard 確認**（多半是 `?api_key=` 或 `Authorization` header） |
-| CORS | **文件未寫明 → 一律由 Worker 補 `Access-Control-Allow-Origin`** |
-| 免費額度 | 圖磚 30,000/月、nowcast 點位 5,000/月，無合約 |
+| 認證 | **header `Ocp-Apim-Subscription-Key: <金鑰>`**（或 `?token=`）。金鑰值只進 Worker secret，不寫進任何檔案 |
+| 快照 | `GET /tiles/v1/snapshot?layer=precip` → `{"snapshot": <epoch秒>}`，對齊 10 分鐘，實測落後現在約 15 分 |
+| 圖磚 | `GET /tiles/v1/precip/{snapshot}/{ft}/{z}/{x}/{y}` → **256×256 RGBA PNG（透明底，不用去背）** |
+| | `ft` 未來秒數 `[0,14400]` step 600；`z` 0–12；上游已帶 `Cache-Control: immutable` |
+| | 歷史快照可用：`snapshot - k*600`（k=1..12）實測 200、內容各不同 → 過去 2 小時也拿得到 |
+| | `precip` = 區域（雷達品質高）；`precip-global` = 全球後備 |
+| 點位 nowcast | `GET /nowcast/v1/precip/{lon}/{lat}` → `{summary:{intensity}, forecast:[{timestampBegin,timestampEnd,precipRate,precipType}]}`，逐分鐘、未來 4 小時。`precipType` = `no_precipitation\|rain\|snow\|mixed` |
+| CORS | 上游**沒有** `Access-Control-Allow-Origin` → 一律由 Worker 補 |
+| 免費額度 | 圖磚 30,000/月、nowcast 點位 5,000/月（≈166/天），無合約，**超量計費** |
+| 台灣覆蓋 | 實測台北周邊圖磚有真實回波、nowcast 有逐分鐘資料（向日葵九號衛星在正上方） |
 | 已知弱點 | ML nowcast 預測時間越長越「糊」；前 30–60 分可信，1–2 小時當趨勢 |
+
+### 額度控制（架構層，不靠計數器）
+
+- **圖磚 `maxNativeZoom: 8`**：騎乘判讀「雨帶會不會掃到我」不需要 z12（z12 是 z8 的 16 倍圖磚量）。
+- **時間軸以未來為主**：`ft` 0…7200（現在＋未來 2 小時，13 格）。過去那段從既有的 CWA `data` 分支補（免費、Actions 已在抓），或乾脆不做——v1c 的重點是「未來」。
+- **nowcast 點位獨立計時器**（不放 `onPos()`，那個每次 GPS 更新都會觸發）＋「移動超過 ~2km 才重打」。
+- Worker：`Referer` 白名單擋圖磚盜用、`Origin` 白名單擋 JSON、圖磚走 `caches.default` 邊緣快取（immutable，重複請求不打 Rainbow）。
+- 先不做硬性每日上限（免費 KV 每天只有 1000 次寫入，逐次計數不划算）。第一次實地騎乘後看 Rainbow dashboard 再決定要不要加。
 
 ## 架構
 
@@ -58,44 +67,47 @@ https://api.rainbow.ai/…
 
 ## 具體步驟
 
-### Step 1：申請 Rainbow 金鑰、確認認證與色階
-- 使用者到 rainbow.ai 註冊、拿免費 API key（給我值，我放進 Worker secret，不進 git）
-- 從 dashboard / 文件確認：認證是 query param 還是 header
-- 找 Rainbow 圖磚的色階說明（dBZ 或 mm/h 對照），做前端圖例用
-- 產出：金鑰、認證方式、色階表
+### Step 1：申請 Rainbow 金鑰、確認認證 ✅ 完成
+- 金鑰已拿到，已用真實金鑰打過所有端點（見上表，全 200）
+- 認證：`Ocp-Apim-Subscription-Key` header
+- 圖磚色階：實作時從重雨樣本 / 官方文件補（目前已知淺藍→深藍為小雨）
 
-### Step 2：建 Cloudflare Worker 專案
-- `wrangler init rainbow-proxy`（免費帳號即可）
-- 三條路由：
-  - `GET /snapshot` → 代理 `/tiles/v1/snapshot?layer=precip`
-  - `GET /tile/:snapshot/:ft/:z/:x/:y` → 代理對應圖磚，`Cache-Control: public, max-age=86400, immutable`
-  - `GET /nowcast/:lon/:lat` → 代理點位 nowcast，`max-age=120`
-- 共用中介：Origin/Referer 白名單、CORS header、每日計數上限（用 Cache API 或輕量 KV 抽樣計數）
-- `wrangler secret put RAINBOW_KEY`
-- 產出：`worker/` 目錄（可放進 repo，不含金鑰）、`wrangler.toml`
+### Step 2：Cloudflare Worker ✅ 程式已寫好（`worker/`）
+- `worker/src/index.js`、`worker/wrangler.toml`、`worker/README.md`
+- 三路由 + Origin/Referer 白名單 + CORS + `caches.default` 邊緣快取
+- **金鑰不在任何檔案裡**，靠 `wrangler secret put RAINBOW_KEY`
 
-### Step 3：部署 Worker 並驗證
-- `wrangler deploy`
-- curl 三條路由：snapshot 回合理 epoch；tile 回 PNG（`Content-Type: image/png`）；nowcast 回 `forecast[]`
-- 確認回應帶 `Access-Control-Allow-Origin`
-- 確認帶錯 Origin 會被擋
-- 產出：可用的 Worker URL
+### Step 3：使用者部署 Worker（互動登入，我做不了）
+```bash
+cd worker
+npm install -g wrangler
+wrangler login                  # 瀏覽器登入 Cloudflare（ymeroom@gmail.com）
+wrangler secret put RAINBOW_KEY  # 貼金鑰
+wrangler deploy
+```
+- 驗證指令在 `worker/README.md`
+- **部署成功後把 Worker URL 給我** → 我填進 `index.html` 的 `RAINBOW_PROXY`
+
+### Step 3.5：輪換金鑰（部署驗證通過後）
+- 金鑰目前在對話記錄裡是明文。Worker 上線、確認能用之後，到 Rainbow developer portal
+  重新產一組、`wrangler secret put RAINBOW_KEY` 更新、舊的作廢
+  → 唯一有效副本只剩 Cloudflare secret。
 
 ### Step 4：index.html — 加 `radarMode = 'rainbow'` 與影格組裝
 - `PROXY` 常數 = Worker URL
 - `loadRadarIndex()` 最前面先試 Rainbow：
   - `fetch(PROXY + '/snapshot')` 拿 `snapshot`
   - 組影格：
-    - 過去：`snapshot - k*600`（k = 1..12），`forecast_time = 0` → 過去 2 小時觀測
     - 現在：`snapshot`、`ft = 0`
-    - 未來：`snapshot`、`ft = 600 … 7200`（step 600）→ 未來 2 小時（先不做滿 4 小時，太糊）
+    - 未來：`snapshot`、`ft = 600 … 7200`（step 600）→ 未來 2 小時（13 格；不做滿 4 小時，太糊）
+    - 過去（選配）：`snapshot - k*600`（k = 1..6）ft=0 給 1 小時 context；嫌煩就整段不做，v1c 重點是未來
   - 每格：`{type:'rainbow', snapshot, ft, ms:(baseEpoch+ft)*1000, isForecast: ft>0}`
   - 沿用現有 `adoptFrames()` 的捲軸位置保留邏輯
 - 失敗才往下走 CWA `data` 分支 → RainViewer（現有邏輯）
 - 產出：Rainbow 影格索引
 
 ### Step 5：showFrame 支援 Rainbow 圖磚 + 時間軸標記 + 圖例
-- `if(radarMode === 'rainbow') radarLayer = L.tileLayer(PROXY + '/tile/' + f.snapshot + '/' + f.ft + '/{z}/{x}/{y}', {opacity:RADAR_OPACITY, zIndex:400, maxNativeZoom:12, maxZoom:18})`
+- `if(radarMode === 'rainbow') radarLayer = L.tileLayer(PROXY + '/tile/' + f.snapshot + '/' + f.ft + '/{z}/{x}/{y}', {opacity:RADAR_OPACITY, zIndex:400, maxNativeZoom:8, maxZoom:18})`（z8 就夠判讀，省 16 倍圖磚量）
 - 沿用現有的「舊圖層等新圖層 `once('load')` 再移除」防閃爍
 - 時間標籤：`isForecast` 顯示「預報」（橘色），否則「觀測」
 - 預報 +90 分後的影格，標籤加「僅供參考」
@@ -104,6 +116,7 @@ https://api.rainbow.ai/…
 
 ### Step 6：降雨面板改接 Rainbow 點位 nowcast
 - 你的位置 → `fetch(PROXY + '/nowcast/' + lon + '/' + lat)`
+- **獨立計時器**（如 `NOWCAST_REFRESH_MS = 300000`）＋「移動超過 ~2km 才重打」，**不要放進 `onPos()`**（每次 GPS 更新都會觸發，一趟就爆 166/天額度）
 - 從 `forecast[]` 算出：目前是否在下雨、**下一場雨幾分鐘後開始**、強度（precipType + precipRate 轉白話）
 - 面板主行改成：`🌧️ 雨 25 分後開始 · 中雨`（或 `目前無雨，未來 2 小時乾`）
 - CWA 縣市 3 小時降雨機率降級為第二行「背景參考（縣市級・3 小時）」
@@ -150,7 +163,10 @@ https://api.rainbow.ai/…
 | Rainbow 圖磚無資料回 404 | 前端當透明處理，不跳錯 |
 | 免費額度未來縮水 / 服務收掉 | 後備鏈仍在（CWA → RainViewer），退回 v1b 體驗 |
 
-## 開工前你要給我的
+## 下一步：換你動手
 
-1. Rainbow 免費 API key（我放 Worker secret）
-2. 你有沒有 Cloudflare 帳號？沒有的話註冊一個（免費，不用信用卡）
+1. `cd worker`、照 `worker/README.md` 跑 `wrangler login` → `wrangler secret put RAINBOW_KEY` → `wrangler deploy`
+2. 把 Worker URL 貼給我
+3. 我接前端（Step 4–8），push，你手機實測
+
+（Cloudflare 帳號用 ymeroom@gmail.com 註冊，免費、免信用卡。）

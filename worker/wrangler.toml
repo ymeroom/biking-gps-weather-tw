@@ -1,0 +1,9 @@
+name = "rainbow-proxy"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# 金鑰不放這裡。用：  wrangler secret put RAINBOW_KEY
+# 本機測試放 worker/.dev.vars（已 gitignore）：  RAINBOW_KEY=xxxx
+
+[observability]
+enabled = true
