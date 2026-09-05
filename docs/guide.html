@@ -1,0 +1,356 @@
+<title>單車 GPS 降水地圖 使用手冊</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap">
+<style>
+  :root{
+    --bg:#F3F5F8;
+    --surface:#FFFFFF;
+    --ink:#151A21;
+    --muted:#5A6672;
+    --accent:#0E7C86;
+    --accent-soft:#E3EFF0;
+    --warn:#B7530A;
+    --warn-soft:#F6EADD;
+    --line:#DCE2EA;
+    --shadow:0 1px 2px rgba(21,26,33,.04),0 8px 24px rgba(21,26,33,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10151C;
+      --surface:#171E27;
+      --ink:#E8EEF4;
+      --muted:#96A3B1;
+      --accent:#3BB6C0;
+      --accent-soft:#12303350;
+      --warn:#F0A24E;
+      --warn-soft:#3a2a1650;
+      --line:#2A333F;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10151C;
+    --surface:#171E27;
+    --ink:#E8EEF4;
+    --muted:#96A3B1;
+    --accent:#3BB6C0;
+    --accent-soft:#12303350;
+    --warn:#F0A24E;
+    --warn-soft:#3a2a1650;
+    --line:#2A333F;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+    font-size:16px;
+    line-height:1.72;
+    letter-spacing:.01em;
+  }
+  .wrap{max-width:720px;margin:0 auto;padding:32px 20px 96px}
+
+  header{padding:8px 0 4px}
+  .kicker{
+    font-family:"JetBrains Mono",ui-monospace,monospace;
+    font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 12px;
+  }
+  h1{
+    font-family:"Noto Serif TC",serif;font-weight:700;
+    font-size:clamp(28px,7vw,40px);line-height:1.25;
+    margin:0 0 12px;text-wrap:balance;letter-spacing:0;
+  }
+  .lede{font-size:17px;color:var(--muted);margin:0;max-width:36em}
+
+  /* 模擬 App 頂端狀態列 —— 讓讀者一眼認出畫面 */
+  .statusbar{
+    display:flex;flex-wrap:wrap;gap:8px;margin:24px 0 8px;
+  }
+  .chip{
+    font-family:"JetBrains Mono",monospace;font-size:12.5px;
+    background:var(--surface);border:1px solid var(--line);border-radius:999px;
+    padding:6px 12px;color:var(--muted);box-shadow:var(--shadow);
+  }
+  .chip b{color:var(--ink);font-weight:600}
+
+  section{margin:44px 0 0}
+  h2{
+    font-family:"Noto Serif TC",serif;font-weight:600;
+    font-size:22px;line-height:1.35;margin:0 0 4px;
+    display:flex;align-items:baseline;gap:10px;
+  }
+  h2 .n{
+    font-family:"JetBrains Mono",monospace;font-size:13px;font-weight:600;
+    color:var(--accent);letter-spacing:.05em;flex:none;
+  }
+  h2 + .sub{margin:0 0 20px;color:var(--muted);font-size:14.5px}
+
+  p{margin:0 0 16px}
+  a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+  strong{font-weight:700}
+  code{
+    font-family:"JetBrains Mono",monospace;font-size:.88em;
+    background:var(--accent-soft);color:var(--ink);
+    padding:1px 5px;border-radius:4px;
+  }
+
+  /* 編號步驟 —— 只有「第一次使用」是真的順序 */
+  ol.steps{list-style:none;margin:0;padding:0;counter-reset:s}
+  ol.steps li{
+    counter-increment:s;position:relative;
+    padding:16px 0 16px 44px;border-top:1px solid var(--line);
+  }
+  ol.steps li:last-child{border-bottom:1px solid var(--line)}
+  ol.steps li::before{
+    content:counter(s);position:absolute;left:0;top:15px;
+    width:28px;height:28px;display:grid;place-items:center;
+    font-family:"JetBrains Mono",monospace;font-size:13px;font-weight:600;
+    color:var(--accent);border:1px solid var(--accent);border-radius:50%;
+  }
+  ol.steps li b{display:block;font-size:15.5px;margin-bottom:2px}
+  ol.steps li span{font-size:14.5px;color:var(--muted)}
+
+  /* 畫面元素表 */
+  dl.parts{margin:0;display:grid;gap:0}
+  dl.parts > div{
+    display:grid;grid-template-columns:132px 1fr;gap:16px;
+    padding:14px 0;border-top:1px solid var(--line);
+  }
+  dl.parts > div:last-child{border-bottom:1px solid var(--line)}
+  dl.parts dt{font-weight:700;font-size:14.5px;display:flex;align-items:center;gap:7px}
+  dl.parts dd{margin:0;font-size:14.5px;color:var(--muted)}
+  .swatch{width:14px;height:14px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.15)}
+  .swatch.me{background:#1d6fe0;border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.2)}
+  .swatch.ghost{background:#ff8f00;border:2px dashed #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+  @media (max-width:480px){
+    dl.parts > div{grid-template-columns:1fr;gap:4px}
+  }
+
+  /* dBZ 回波色階 —— 用 App 真實色碼 */
+  .legend{
+    background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    padding:6px 14px;box-shadow:var(--shadow);
+  }
+  .legend .row{
+    display:grid;grid-template-columns:64px 88px 1fr;align-items:center;gap:12px;
+    padding:8px 0;border-top:1px solid var(--line);font-size:14px;
+  }
+  .legend .row:first-child{border-top:0}
+  .legend .bar{height:16px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
+  .legend .dbz{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--muted)}
+  .legend .lab{font-weight:500}
+
+  /* callout：藍=建議，琥珀=限制/警告 */
+  .note{
+    border-left:3px solid var(--accent);background:var(--accent-soft);
+    border-radius:0 10px 10px 0;padding:14px 16px;margin:20px 0;font-size:14.5px;
+  }
+  .note.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+  .note p{margin:0 0 8px}
+  .note p:last-child{margin:0}
+  .note .h{
+    font-weight:700;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:6px;font-family:"JetBrains Mono",monospace;
+  }
+  .note.warn .h{color:var(--warn)}
+
+  ul.tips{list-style:none;margin:0;padding:0}
+  ul.tips li{
+    padding:14px 0 14px 26px;border-top:1px solid var(--line);position:relative;font-size:14.5px;
+  }
+  ul.tips li:last-child{border-bottom:1px solid var(--line)}
+  ul.tips li::before{
+    content:"";position:absolute;left:0;top:22px;width:9px;height:9px;
+    border-radius:50%;background:var(--accent);
+  }
+  ul.tips li b{font-weight:700}
+
+  table.data{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0 0}
+  table.data th,table.data td{text-align:left;padding:11px 12px;border-top:1px solid var(--line);vertical-align:top}
+  table.data th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  table.data td:first-child{font-weight:700;white-space:nowrap}
+  table.data .mono{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--muted)}
+
+  footer{
+    margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--muted);
+  }
+  footer a{border-bottom-color:transparent}
+
+  @media (prefers-reduced-motion:no-preference){
+    a{transition:border-color .15s}
+  }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="kicker">騎乘前必讀 · 台灣版</p>
+  <h1>單車 GPS 降水地圖<br>使用手冊</h1>
+  <p class="lede">騎車時打開的手機網頁：藍點跟著你的 GPS 走，地圖疊上中央氣象署的雷達回波圖，讓你在路上目測「等一下這場雨會不會掃到我」。</p>
+
+  <div class="statusbar" aria-hidden="true">
+    <span class="chip">定位：<b>±12 m</b></span>
+    <span class="chip">雷達：<b>00:36 更新</b></span>
+    <span class="chip">速度：<b>21.4 km/h</b></span>
+  </div>
+  <p class="sub" style="font-size:13px;margin-top:6px">▲ 這是 App 頂端的三個狀態標籤，開起來就會看到。</p>
+</header>
+
+<section>
+  <h2><span class="n">01</span>這是什麼、不是什麼</h2>
+  <p>日本版（<code>biking-gps-weather</code>）用氣象廳免費的「未來 2 小時雷達預報圖磚」，可以真的看到雨帶往哪裡移動的動畫。<strong>台灣沒有等價的免費公開資料。</strong></p>
+  <p>所以這個台灣版能給你的是：<strong>過去約 2–3 小時的觀測回波動畫</strong>（每 10 分鐘一格，可播放）＋<strong>你所在／前方縣市未來幾小時的降雨機率文字預報</strong>。看雨帶這幾小時往哪個方向移動、移多快，再自己往前推。</p>
+  <div class="note warn">
+    <div class="h">要有心理準備</div>
+    <p>沒有「未來雷達動畫」，也沒有「你頭頂現在幾 mm」的即時讀數。它是<strong>觀測回波 + 縣市級文字預報</strong>的組合，靠你的眼睛和判斷把兩者兜起來。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span>第一次使用</h2>
+  <p class="sub">這四步是有順序的，照做一次之後每天點 icon 就能開。</p>
+  <ol class="steps">
+    <li><b>手機瀏覽器開網址</b><span>iPhone 用 Safari、Android 用 Chrome，開 <code>ymeroom.github.io/biking-gps-weather-tw</code>。定位功能只在這種 https 網址下有效，直接雙擊本機檔案（<code>file://</code>）會被瀏覽器擋。</span></li>
+    <li><b>允許定位權限</b><span>跳出詢問時選「允許」。建議選「使用 App 期間允許」＋「精確位置」，藍點才會準。</span></li>
+    <li><b>加到主畫面</b><span>Safari 分享鈕 →「加入主畫面」；Chrome 選單 →「加到主畫面」。之後點 icon 全螢幕開啟，跟 App 一樣。</span></li>
+    <li><b>帶行動電源</b><span>持續定位 + 螢幕開著很吃電。長程騎乘一定要帶。</span></li>
+  </ol>
+</section>
+
+<section>
+  <h2><span class="n">03</span>畫面上有什麼</h2>
+  <dl class="parts">
+    <div>
+      <dt><span class="swatch me"></span>藍點＋三角</dt>
+      <dd>你目前的位置與行進方向。外圈淡藍色是定位精度，圈越大代表越不準（常見於室內、高樓、剛開 GPS 時）。</dd>
+    </div>
+    <div>
+      <dt><span class="swatch ghost"></span>橘色虛線點</dt>
+      <dd>照你<strong>現在的方向與速度</strong>直線推算的前方位置，標 <code>+10</code>／<code>+20</code>／<code>+30</code> 分與距離。拿它去對雷達回波：「我到那裡的時候，雨帶到哪了？」靜止或手機還沒回報方向時不顯示。</dd>
+    </div>
+    <div>
+      <dt>時間軸＋▶</dt>
+      <dd>過去約 2–3 小時的觀測回波，每 10 分鐘一格。按 ▶ 播放，看整段雨帶怎麼移動。拉到最右邊是最新一張。</dd>
+    </div>
+    <div>
+      <dt>前方縣市降雨面板</dt>
+      <dd>畫面最上方那條。顯示你<strong>所在縣市</strong>當前 3 小時的降雨機率與天氣；若 +30 分推算位置跨到別的縣市，會多顯示一行「前方 ○○縣」。資料過期時會顯示「⚠️ 降雨預報資料過期」而不是硬給你舊數字。</dd>
+    </div>
+    <div>
+      <dt>雷達 XX:XX 更新</dt>
+      <dd>頂端標籤，最新一張回波的時間（台灣時間）。氣象署約每 10 分鐘更新，本 App 每 3 分鐘重讀一次。</dd>
+    </div>
+    <div>
+      <dt>📍 跟隨</dt>
+      <dd>亮起時地圖自動跟著藍點跑。手動拖動地圖會自動關掉，方便你先看遠處的雨。</dd>
+    </div>
+    <div>
+      <dt>⏱️ 回到最新</dt>
+      <dd>時間軸一鍵跳回最新一張回波。</dd>
+    </div>
+    <div>
+      <dt>💡 螢幕常亮</dt>
+      <dd>騎乘時不讓螢幕自動關。<strong>iOS Safari 沒有這個功能</strong>，按鈕會顯示「不支援」—— 請改到 iPhone 設定 →「螢幕顯示與亮度」→「自動鎖定」調長或設「永不」。</dd>
+    </div>
+    <div>
+      <dt>🌙 深色底圖</dt>
+      <dd>把街道底圖反轉成暗色，傍晚或夜騎時回波看得比較清楚、也比較不刺眼。</dd>
+    </div>
+    <div>
+      <dt>🎨 圖例</dt>
+      <dd>叫出下面這張回波強度對照表。</dd>
+    </div>
+  </dl>
+</section>
+
+<section>
+  <h2><span class="n">04</span>雷達回波怎麼看</h2>
+  <p class="sub">顏色是雷達反射強度（dBZ），大致對應雨勢。這是氣象署的標準色階。</p>
+  <div class="legend">
+    <div class="row"><span class="bar" style="background:rgb(0,200,255)"></span><span class="dbz">≤ 15 dBZ</span><span class="lab">毛毛雨 / 極弱</span></div>
+    <div class="row"><span class="bar" style="background:rgb(0,91,255)"></span><span class="dbz">15–25</span><span class="lab">小雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(0,200,0)"></span><span class="dbz">25–35</span><span class="lab">中雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(255,255,0)"></span><span class="dbz">35–40</span><span class="lab">大雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(255,152,0)"></span><span class="dbz">40–45</span><span class="lab">大雨→豪雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(255,0,0)"></span><span class="dbz">45–55</span><span class="lab">豪雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(180,0,0)"></span><span class="dbz">55–60</span><span class="lab">大豪雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(255,0,255)"></span><span class="dbz">≥ 60</span><span class="lab">劇烈</span></div>
+  </div>
+  <div class="note">
+    <div class="h">判讀重點</div>
+    <p><strong>看移動，不是看現在。</strong>按 ▶ 播完整段，注意雨帶整體往哪個方位飄、大概多快。台灣夏天午後雷雨常從山區往平地、或隨西南風由西南往東北移。</p>
+    <p><strong>紅色以上不要硬騎。</strong>橘紅色回波往往伴隨強陣風、能見度驟降、甚至落雷。看到一團紅色正對著你的前進方向，提早找地方躲。</p>
+    <p><strong>回波會發展也會消散。</strong>一團黃色可能 20 分鐘後變紅，也可能散掉。動畫只能告訴你趨勢，不能保證。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">05</span>實用建議</h2>
+  <ul class="tips">
+    <li><b>出發前：</b>先看時間軸整段回放一次，加上頂端的縣市降雨機率。機率 &lt; 20% 且畫面上沒有回波往你路線方向來 —— 通常可以放心出門。</li>
+    <li><b>騎乘中每 15–20 分鐘瞄一次：</b>停紅燈、補給、上廁所時看就好。重點是「有沒有新的一團回波出現在我上風處」。</li>
+    <li><b>看到雨帶接近時：</b>把時間軸拉到最新，再看橘色 <code>+30 分</code> 推算點落在哪。如果推算點已經在回波裡、而回波還在往你這邊移 —— 你大概躲不掉，提早找超商 / 騎樓 / 加油站。</li>
+    <li><b>雨帶跟你同向移動：</b>如果回波移動方向跟你前進方向差不多、速度也接近，你可能會「跟著雨走」很久。考慮放慢讓它先走、或加速切出去。</li>
+    <li><b>山區 / 縱谷路線：</b>地形雨變化快，縣市級文字預報參考價值低，以雷達回波的實際發展為準。</li>
+    <li><b>傍晚 / 夜騎：</b>先開 🌙 深色底圖。iPhone 記得把「自動鎖定」設長一點，Android 開 💡 螢幕常亮。</li>
+    <li><b>沒有手機訊號時：</b>地圖底圖和回波都是網路載入的，山區收訊差就刷不出來。進山前先在有訊號的地方把最新回波載好、心裡有個底。</li>
+    <li><b>別完全信推算點：</b>它假設你直線前進、等速。實際會轉彎、爬坡變慢、下坡變快。把它當「大概那個方向那個距離」，不是精準預言。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">06</span>資料從哪來、多久更新</h2>
+  <table class="data">
+    <thead><tr><th>項目</th><th>來源</th><th>更新頻率</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>雷達回波</td>
+        <td>中央氣象署開放資料<br><span class="mono">O-A0058-003 整合回波圖<br>（臺灣鄰近地區・無地形）</span><br>範圍 <span class="mono">118–124°E, 20.5–26.5°N</span></td>
+        <td>氣象署約每 10 分鐘<br>後台每 ~12 分鐘抓一張<br>App 每 3 分鐘重讀</td>
+      </tr>
+      <tr>
+        <td>縣市降雨預報</td>
+        <td>氣象署鄉鎮天氣預報<br><span class="mono">F-D0047-089</span><br>縣市級・3 小時降雨機率＋天氣現象</td>
+        <td>氣象署約每 6 小時<br>App 每 15 分鐘重讀</td>
+      </tr>
+      <tr>
+        <td>街道底圖</td>
+        <td>OpenStreetMap</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>後備雷達源</td>
+        <td>RainViewer<br><span class="mono">氣象署資料抓不到時自動切換</span></td>
+        <td>約每 10 分鐘</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <div class="h">背後怎麼運作</div>
+    <p>一個 GitHub Actions 排程每 ~12 分鐘去氣象署抓一張回波圖，去背、縮圖後存進儲存分支，保留最近 18 張做動畫。網頁再從那裡讀。所以你看到的回波最舊約 2–3 小時、最新約 10–25 分鐘前。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">07</span>已知限制</h2>
+  <ul class="tips">
+    <li><b>沒有未來雷達動畫。</b>台灣沒有免費公開的未來回波資料。時間軸只有過去。</li>
+    <li><b>縣市降雨面板是「文字預報」不是雷達。</b>縣市級、每 3 小時一格、約 6 小時才更新一次。別拿它當即時資訊，它跟雷達回波的時間尺度完全不同。</li>
+    <li><b>剛開 App 時橘色推算點可能不出現。</b>手機要持續移動幾秒才會回報行進方向和速度。App 會顯示一行說明。</li>
+    <li><b>iOS Safari 不支援螢幕常亮。</b>用系統設定的「自動鎖定」替代。</li>
+    <li><b>回波偶爾延遲。</b>GitHub 排程本身會延遲 10–25 分鐘，遇到氣象署或 CDN 快取還會再久一點。看頂端「雷達 XX:XX 更新」確認新鮮度。</li>
+    <li><b>投影是近似的。</b>回波圖用等距圓柱投影直接疊在地圖上，台灣緯度跨度小、誤差在騎乘判讀可接受範圍內，但別拿去做公里級的精準定位。</li>
+  </ul>
+</section>
+
+<footer>
+  <p>App 網址：<a href="https://ymeroom.github.io/biking-gps-weather-tw/">ymeroom.github.io/biking-gps-weather-tw</a></p>
+  <p>單一 <code>index.html</code>、無後端。原始碼與計劃書在 GitHub repo <code>ymeroom/biking-gps-weather-tw</code>。</p>
+</footer>
+</div>
