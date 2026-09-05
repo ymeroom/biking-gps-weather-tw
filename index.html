@@ -104,6 +104,7 @@
     <span class="k" style="background:#1d6fe0"></span>你的位置
     <span class="k" style="background:#ff8f00"></span>推算的前方位置。
     播放時間軸看雨帶往哪移動。<b>台灣沒有未來雷達動畫，只有觀測回波＋上面的鄉鎮降雨機率預報。</b>
+    <span id="ghosthint" hidden style="display:block;margin-top:4px;color:var(--panel-sub)">📴 手機還沒回報行進方向／速度（通常要持續移動幾秒），暫時不顯示前方推算點。</span>
   </div>
   <div class="tl-row">
     <button id="play" aria-label="播放">▶</button>
@@ -257,7 +258,12 @@ function clearGhosts(){ ghostMarkers.forEach(m => map.removeLayer(m)); ghostMark
 function updateGhosts(){
   clearGhosts();
   const p = state.pos;
-  if(!p || p.speed == null || p.speed < 0.8 || p.heading == null) return;  // 靜止或無方向不畫
+  const gh = document.getElementById('ghosthint');
+  if(!p || p.speed == null || p.speed < 0.8 || p.heading == null){
+    if(gh) gh.hidden = !p;   // 已定位但沒方向／速度 → 說明為何沒有前方點
+    return;
+  }
+  if(gh) gh.hidden = true;
   GHOST_MINS.forEach(min => {
     const dist = p.speed * min * 60;
     const [glat, glon] = destPoint(p.lat, p.lon, p.heading, dist);
@@ -346,12 +352,14 @@ function showFrame(i){
 
 /* ───────────────────────── 前方鄉鎮降雨預報面板 ───────────────────────── */
 let forecastData = null;
+let forecastUpdatedMs = 0;
 async function loadForecast(){
   try{
     const fc = await fetch(DATA_BASE + 'forecast.json?v=' + Math.floor(Date.now()/600000), {cache:'no-store'}).then(r => {
       if(!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     });
     forecastData = fc.counties || [];
+    forecastUpdatedMs = fc.updated ? Date.parse(fc.updated) : 0;
     renderForecast();
   }catch(_){ /* data 分支還沒建好就先空著 */ }
 }
@@ -367,7 +375,13 @@ function nearestCounty(lat, lon){
 function slotNow(c){
   if(!c || !c.slots) return null;
   const now = Date.now();
-  return c.slots.find(s => Date.parse(s.e) > now) || c.slots[0];
+  return c.slots.find(s => Date.parse(s.e) > now) || null;  // 全部過期 → null（不拿舊格假裝是現在）
+}
+function fmtAge(ms){
+  if(!ms) return '';
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if(mins < 90) return mins + ' 分前';
+  return Math.round(mins / 60) + ' 小時前';
 }
 function popTone(pop){
   const n = +pop;
@@ -377,8 +391,15 @@ function renderForecast(){
   const el = document.getElementById('forecast');
   if(!forecastData || !forecastData.length || !state.pos){ el.hidden = true; return; }
   const here = nearestCounty(state.pos.lat, state.pos.lon);
+  if(!here){ el.hidden = true; return; }
   const s = slotNow(here);
-  if(!here || !s){ el.hidden = true; return; }
+  if(!s){
+    el.innerHTML = '<b style="color:#e07a00">⚠️ 降雨預報資料過期</b>' +
+      '<br><span style="color:var(--panel-sub);font-size:11px">最後更新 ' + (fmtAge(forecastUpdatedMs) || '未知') +
+      ' — GitHub Actions 可能停了，請看下方雷達回波。</span>';
+    el.hidden = false;
+    return;
+  }
   let html = '<b>' + here.name + '</b> ' + (s.wx || '') +
              ' ｜ 降雨機率 <b style="color:' + popTone(s.pop) + '">' + (s.pop==null?'—':s.pop+'%') + '</b>' +
              ' <span style="color:var(--panel-sub)">(' + s.s.slice(11,16) + '–' + s.e.slice(11,16) + ')</span>';
