@@ -276,7 +276,9 @@ let rvHost = '';
 async function loadRadarIndex(){
   // 先試 CWA data 分支
   try{
-    const idx = await fetch(DATA_BASE + 'radar/index.json', {cache:'no-store'}).then(r => {
+    // raw.githubusercontent 有 ~5 分鐘 CDN 快取，用分鐘級 query 參數穿透
+    const bust = Math.floor(Date.now() / 60000);
+    const idx = await fetch(DATA_BASE + 'radar/index.json?v=' + bust, {cache:'no-store'}).then(r => {
       if(!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     });
     if(!idx.frames || !idx.frames.length) throw new Error('無影格');
@@ -346,7 +348,7 @@ function showFrame(i){
 let forecastData = null;
 async function loadForecast(){
   try{
-    const fc = await fetch(DATA_BASE + 'forecast.json', {cache:'no-store'}).then(r => {
+    const fc = await fetch(DATA_BASE + 'forecast.json?v=' + Math.floor(Date.now()/600000), {cache:'no-store'}).then(r => {
       if(!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     });
     forecastData = fc.counties || [];
