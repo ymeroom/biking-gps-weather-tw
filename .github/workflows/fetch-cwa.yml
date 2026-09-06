@@ -2,7 +2,7 @@ name: 抓 CWA 雷達與降雨預報
 
 on:
   schedule:
-    - cron: "*/12 * * * *"     # 每 12 分鐘（GitHub 排程常延遲，實際約 12–25 分）
+    - cron: "*/15 * * * *"     # 每 15 分鐘（GitHub 高頻排程常被跳過／延遲，15 分比 12 分穩）
   workflow_dispatch: {}
 
 permissions:
