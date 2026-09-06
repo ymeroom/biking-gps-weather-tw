@@ -40,6 +40,8 @@
   #forecast{font-size:13px;line-height:1.6;margin-bottom:8px;padding:8px 10px;border-radius:9px;
     background:var(--btn-bg);border:1px solid var(--border)}
   #forecast[hidden]{display:none}
+  #ghosthint{display:block;margin-top:4px;color:var(--panel-sub)}
+  #ghosthint[hidden]{display:none}
 
   .tl-row{display:flex;align-items:center;gap:10px}
   #play{flex:0 0 auto;width:46px;height:46px;border-radius:50%;border:1px solid var(--border);background:var(--btn-bg);
@@ -93,9 +95,9 @@
 <div id="toast" hidden></div>
 
 <div id="legend" hidden>
-  <h4>雷達回波強度</h4>
+  <h4 id="legend-title">雷達回波強度</h4>
   <div id="legend-rows"></div>
-  <div style="margin-top:6px;color:var(--panel-sub)">資料：中央氣象署 整合雷達回波圖（僅觀測）</div>
+  <div id="legend-src" style="margin-top:6px;color:var(--panel-sub)"></div>
 </div>
 
 <div id="panel">
@@ -103,8 +105,8 @@
   <div id="hint">
     <span class="k" style="background:#1d6fe0"></span>你的位置
     <span class="k" style="background:#ff8f00"></span>推算的前方位置。
-    播放時間軸看雨帶往哪移動。<b>台灣沒有未來雷達動畫，只有觀測回波＋上面的鄉鎮降雨機率預報。</b>
-    <span id="ghosthint" hidden style="display:block;margin-top:4px;color:var(--panel-sub)">📴 手機還沒回報行進方向／速度（通常要持續移動幾秒），暫時不顯示前方推算點。</span>
+    <b id="modehint">播放時間軸看雨帶往哪移動。</b>
+    <span id="ghosthint" hidden>📴 手機還沒回報行進方向／速度（通常要持續移動幾秒），暫時不顯示前方推算點。</span>
   </div>
   <div class="tl-row">
     <button id="play" aria-label="播放">▶</button>
@@ -129,9 +131,16 @@
    RainViewer 當 data 分支還沒建好 / 抓失敗時的後備。 */
 const DATA_BASE = 'https://raw.githubusercontent.com/ymeroom/biking-gps-weather-tw/data/';
 const RV_MANIFEST = 'https://api.rainviewer.com/public/weather-maps.json';
+/* Rainbow Weather API 代理（Cloudflare Worker，藏金鑰＋補 CORS）。
+   有未來 2 小時的降水預報圖磚；掛了就退回 CWA 觀測。空字串 = 停用 Rainbow。 */
+const RAINBOW_PROXY = 'https://rainbow-proxy.ymeroom.workers.dev';
+const RAINBOW_MAX_NATIVE_ZOOM = 8;  // z8 足夠判讀，省 16 倍圖磚量／額度
+const RAINBOW_FUTURE_S = 7200;      // 往未來取到 +2 小時
+const RAINBOW_PAST_S = 3600;        // 往過去取 1 小時當 context
 const RADAR_OPACITY = 0.62;
 const RADAR_REFRESH_MS = 180000;   // 每 3 分重抓
 const FORECAST_REFRESH_MS = 900000; // 每 15 分重抓鄉鎮預報（CWA 約 6 小時更新一次）
+const NOWCAST_REFRESH_MS = 300000; // 每 5 分檢查是否要重打 Rainbow 點位 nowcast
 const GHOST_MINS = [10, 20, 30];   // 前方位置參考點（分鐘）
 const RV_MAX_NATIVE_ZOOM = 7;
 
@@ -153,12 +162,15 @@ const state = {
   headingEMA: null,
   followMode: true,
   wakeWanted: true,
-  frames: [],       // [{img, ms, label}] 全部是觀測，時間由新到舊排序後反轉為由舊到新
+  frames: [],       // [{src, ms, label, isForecast, ...}] 由舊到新
   idx: 0,
+  nowIdx: 0,        // 「現在」那一格（rainbow 模式不是最後一格）
   playing: false,
   playTimer: null,
   refreshTimer: null,
   wakeLock: null,
+  lastNowcastAt: 0,
+  lastNowcastPos: null,
 };
 
 /* ───────────────────────── 地圖 ───────────────────────── */
@@ -233,6 +245,7 @@ function onPos(p){
 
   updateGhosts();
   renderForecast();
+  loadNowcast(false);
 }
 function onPosErr(e){
   const msg = e.code === 1 ? '定位權限被拒 —— 請到瀏覽器設定開啟此網站的定位權限'
@@ -274,13 +287,34 @@ function updateGhosts(){
   });
 }
 
-/* ───────────────────────── 雷達圖層（CWA 主，RainViewer 後備）───────────────────────── */
-let radarMode = 'cwa';        // 'cwa' | 'rv'
+/* ───────────────────────── 雷達圖層（Rainbow 未來預報 → CWA 觀測 → RainViewer）───────────────────────── */
+let radarMode = 'cwa';        // 'rainbow' | 'cwa' | 'rv'
 let cwaBounds = [[20.5,118.0],[26.5,124.0]];
 let rvHost = '';
 
 async function loadRadarIndex(){
-  // 先試 CWA data 分支
+  // 先試 Rainbow（有未來預報）
+  if(RAINBOW_PROXY){
+    try{
+      const { snapshot } = await fetch(RAINBOW_PROXY + '/snapshot?layer=precip', {cache:'no-store'})
+        .then(r => { if(!r.ok) throw new Error('snapshot HTTP ' + r.status); return r.json(); });
+      if(!snapshot) throw new Error('無 snapshot');
+      const nowFt = Math.max(0, Math.round((Date.now()/1000 - snapshot) / 600) * 600);
+      const frames = [];
+      for(let ft = Math.max(0, nowFt - RAINBOW_PAST_S); ft <= nowFt + RAINBOW_FUTURE_S; ft += 600){
+        const ms = (snapshot + ft) * 1000;
+        frames.push({ src:'rainbow', snapshot, ft, ms, label: twLabel(ms), isForecast: ft > nowFt });
+      }
+      radarMode = 'rainbow';
+      const nowIdx = frames.findIndex(f => f.ft === nowFt);
+      adoptFrames(frames, '雷達：<b>Rainbow 預報</b>', nowIdx < 0 ? frames.length - 1 : nowIdx);
+      return;
+    }catch(rbErr){
+      // 掉到 CWA
+      radarMode = 'cwa';
+    }
+  }
+  // CWA data 分支
   try{
     // raw.githubusercontent 有 ~5 分鐘 CDN 快取，用分鐘級 query 參數穿透
     const bust = Math.floor(Date.now() / 60000);
@@ -291,9 +325,9 @@ async function loadRadarIndex(){
     cwaBounds = idx.bounds || cwaBounds;
     radarMode = 'cwa';
     const frames = idx.frames
-      .map(o => ({ url: DATA_BASE + 'radar/' + o.file, ms: o.ms, label: twLabel(o.ms) }))
+      .map(o => ({ src:'cwa', url: DATA_BASE + 'radar/' + o.file, ms: o.ms, label: twLabel(o.ms), isForecast:false }))
       .sort((a,b) => a.ms - b.ms);
-    adoptFrames(frames);
+    adoptFrames(frames, '雷達：<b>' + frames[frames.length-1].label + '</b> CWA觀測');
     return;
   }catch(cwaErr){
     // 後備：RainViewer
@@ -302,28 +336,31 @@ async function loadRadarIndex(){
       rvHost = data.host;
       radarMode = 'rv';
       const frames = (data.radar && data.radar.past || [])
-        .map(o => ({ path: o.path, ms: o.time * 1000, label: twLabel(o.time * 1000) }))
+        .map(o => ({ src:'rv', path: o.path, ms: o.time * 1000, label: twLabel(o.time * 1000), isForecast:false }))
         .sort((a,b) => a.ms - b.ms);
       if(!frames.length) throw new Error('RainViewer 無影格');
-      adoptFrames(frames);
-      document.getElementById('chip-cwa').innerHTML += '<span style="opacity:.7">（後備源）</span>';
+      adoptFrames(frames, '雷達：<b>' + frames[frames.length-1].label + '</b> RainViewer後備');
     }catch(rvErr){
       document.getElementById('chip-cwa').innerHTML = '雷達：<b style="color:#ff9a9a">失敗</b>';
       toast('⚠️ 取不到雷達資料。CWA：' + cwaErr.message + '；RainViewer：' + rvErr.message, 6000);
     }
   }
 }
-function adoptFrames(frames){
+function adoptFrames(frames, chipHtml, nowIdx){
+  const atNow = !state.frames.length || state.idx === state.nowIdx;
   const prevMs = state.frames[state.idx] ? state.frames[state.idx].ms : null;
-  const wasAtNewest = !state.frames.length || state.idx === state.frames.length - 1;
   state.frames = frames;
-  let target = frames.length - 1;
-  if(!wasAtNewest && prevMs != null){
+  state.nowIdx = (nowIdx == null) ? frames.length - 1 : Math.max(0, Math.min(frames.length - 1, nowIdx));
+  let target = state.nowIdx;
+  if(!atNow && prevMs != null){
     let g = Infinity;
     frames.forEach((f,i) => { const d = Math.abs(f.ms - prevMs); if(d < g){ g = d; target = i; } });
   }
   document.getElementById('slider').max = frames.length - 1;
-  document.getElementById('chip-cwa').innerHTML = '雷達：<b>' + frames[frames.length-1].label + ' 更新</b>';
+  document.getElementById('chip-cwa').innerHTML = chipHtml ||
+    ('雷達：<b>' + frames[frames.length-1].label + ' 更新</b>');
+  if(typeof renderLegend === 'function') renderLegend();
+  reflectHint();
   showFrame(target);
 }
 function showFrame(i){
@@ -333,7 +370,11 @@ function showFrame(i){
   const f = state.frames[state.idx];
 
   const prev = radarLayer;
-  if(radarMode === 'cwa'){
+  if(f.src === 'rainbow'){
+    radarLayer = L.tileLayer(RAINBOW_PROXY + '/tile/' + f.snapshot + '/' + f.ft + '/{z}/{x}/{y}', {
+      opacity: RADAR_OPACITY, zIndex: 400, maxNativeZoom: RAINBOW_MAX_NATIVE_ZOOM, maxZoom: 18,
+    });
+  } else if(f.src === 'cwa'){
     radarLayer = L.imageOverlay(f.url, cwaBounds, {opacity: RADAR_OPACITY, zIndex: 400, interactive: false});
   } else {
     radarLayer = L.tileLayer(rvHost + f.path + '/256/{z}/{x}/{y}/4/1_1.png', {
@@ -345,9 +386,15 @@ function showFrame(i){
   radarLayer.once('load', dropPrev);
   setTimeout(dropPrev, 2500);
 
-  const agoMin = Math.round((Date.now() - f.ms) / 60000);
-  const rel = agoMin <= 1 ? '最新' : agoMin + ' 分前';
-  document.getElementById('time-label').innerHTML = f.label + '<small>' + rel + ' · 觀測</small>';
+  const dMin = Math.round((f.ms - Date.now()) / 60000);
+  let tag;
+  if(f.isForecast){
+    tag = '+' + dMin + ' 分 · 預報' + (f.ft > 5400 ? '（僅供參考）' : '');
+  }else{
+    const ago = Math.max(0, -dMin);
+    tag = (ago <= 2 ? '現在' : ago + ' 分前') + ' · 觀測';
+  }
+  document.getElementById('time-label').innerHTML = f.label + '<small>' + tag + '</small>';
 }
 
 /* ───────────────────────── 前方鄉鎮降雨預報面板 ───────────────────────── */
@@ -362,6 +409,56 @@ async function loadForecast(){
     forecastUpdatedMs = fc.updated ? Date.parse(fc.updated) : 0;
     renderForecast();
   }catch(_){ /* data 分支還沒建好就先空著 */ }
+}
+
+/* Rainbow 點位 nowcast —— 你的位置未來 2 小時逐分鐘降水。獨立節流，不跟 onPos 綁死。 */
+let nowcastData = null;
+function roughDistM(a, b){ return Math.hypot((a.lat-b.lat)*111000, (a.lon-b.lon)*101000); }
+async function loadNowcast(force){
+  if(!RAINBOW_PROXY || !state.pos) return;
+  const now = Date.now();
+  if(!force && state.lastNowcastAt){
+    const moved = state.lastNowcastPos ? roughDistM(state.pos, state.lastNowcastPos) : Infinity;
+    if(now - state.lastNowcastAt < 1200000 && moved < 1500) return;  // 20 分內且沒移動 1.5km → 跳過
+  }
+  state.lastNowcastAt = now;
+  state.lastNowcastPos = { lat: state.pos.lat, lon: state.pos.lon };
+  try{
+    const fc = await fetch(
+      RAINBOW_PROXY + '/nowcast/' + state.pos.lon.toFixed(4) + '/' + state.pos.lat.toFixed(4),
+      {cache:'no-store'}
+    ).then(r => { if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    nowcastData = fc;
+    renderForecast();
+  }catch(_){ /* 失敗 → 維持 CWA-only 面板 */ }
+}
+function precipWord(type, rate){
+  if(type === 'snow') return '雪';
+  if(type === 'mixed') return '雨夾雪';
+  if(rate < 0.3) return '毛毛雨';
+  if(rate < 2) return '小雨';
+  if(rate < 8) return '中雨';
+  if(rate < 20) return '大雨';
+  return '豪雨';
+}
+function nowcastLine(){
+  const arr = nowcastData && nowcastData.forecast;
+  if(!arr || !arr.length) return null;
+  const now = Date.now();
+  const wet = s => s && s.precipType && s.precipType !== 'no_precipitation' && s.precipRate > 0;
+  if(wet(arr[0])){
+    let stop = -1;
+    for(let i = 1; i < arr.length; i++){ if(!wet(arr[i])){ stop = i; break; } }
+    const w = precipWord(arr[0].precipType, arr[0].precipRate);
+    if(stop < 0) return '🌧️ 正在下' + w + '，未來 2 小時不會停';
+    return '🌧️ 正在下' + w + '，約 ' + Math.round((arr[stop].timestampBegin*1000 - now)/60000) + ' 分鐘後轉小／停';
+  }
+  let on = -1;
+  for(let i = 0; i < arr.length; i++){ if(wet(arr[i])){ on = i; break; } }
+  if(on < 0) return '☀️ 未來 2 小時無雨';
+  const m = Math.round((arr[on].timestampBegin*1000 - now)/60000);
+  if(m > 120) return '☀️ 未來 2 小時無雨';
+  return '🌧️ 約 ' + m + ' 分鐘後開始下' + precipWord(arr[on].precipType, arr[on].precipRate);
 }
 function nearestCounty(lat, lon){
   if(!forecastData || !forecastData.length) return null;
@@ -389,33 +486,41 @@ function popTone(pop){
 }
 function renderForecast(){
   const el = document.getElementById('forecast');
-  if(!forecastData || !forecastData.length || !state.pos){ el.hidden = true; return; }
-  const here = nearestCounty(state.pos.lat, state.pos.lon);
-  if(!here){ el.hidden = true; return; }
-  const s = slotNow(here);
-  if(!s){
-    el.innerHTML = '<b style="color:#e07a00">⚠️ 降雨預報資料過期</b>' +
-      '<br><span style="color:var(--panel-sub);font-size:11px">最後更新 ' + (fmtAge(forecastUpdatedMs) || '未知') +
-      ' — GitHub Actions 可能停了，請看下方雷達回波。</span>';
-    el.hidden = false;
-    return;
-  }
-  let html = '<b>' + here.name + '</b> ' + (s.wx || '') +
-             ' ｜ 降雨機率 <b style="color:' + popTone(s.pop) + '">' + (s.pop==null?'—':s.pop+'%') + '</b>' +
-             ' <span style="color:var(--panel-sub)">(' + s.s.slice(11,16) + '–' + s.e.slice(11,16) + ')</span>';
-  // 前方（+30 分推算位置）若跨到別的縣市，也顯示
-  if(state.pos.speed != null && state.pos.speed >= 0.8 && state.pos.heading != null){
-    const d = state.pos.speed * 30 * 60;
-    const [flat, flon] = destPoint(state.pos.lat, state.pos.lon, state.pos.heading, d);
-    const ahead = nearestCounty(flat, flon);
-    if(ahead && ahead.name !== here.name){
-      const as = slotNow(ahead);
-      if(as) html += '<br><span style="color:var(--panel-sub)">前方 ' + ahead.name + '</span> ' + (as.wx||'') +
-        ' ｜ <b style="color:' + popTone(as.pop) + '">' + (as.pop==null?'—':as.pop+'%') + '</b>';
+  if(!state.pos){ el.hidden = true; return; }
+  const parts = [];
+
+  const nc = nowcastLine();
+  if(nc) parts.push('<div style="font-weight:700">' + nc +
+    ' <span style="color:var(--panel-sub);font-weight:400;font-size:11px">你的位置 · Rainbow</span></div>');
+
+  if(forecastData && forecastData.length){
+    const here = nearestCounty(state.pos.lat, state.pos.lon);
+    if(here){
+      const s = slotNow(here);
+      if(s){
+        let line = '<span' + (nc ? ' style="color:var(--panel-sub)"' : '') + '>' + here.name + '</span> ' + (s.wx || '') +
+          ' ｜ 降雨機率 <b style="color:' + popTone(s.pop) + '">' + (s.pop==null?'—':s.pop+'%') + '</b>' +
+          ' <span style="color:var(--panel-sub);font-size:11px">(' + s.s.slice(11,16) + '–' + s.e.slice(11,16) + ' 縣市預報)</span>';
+        if(state.pos.speed != null && state.pos.speed >= 0.8 && state.pos.heading != null){
+          const d = state.pos.speed * 30 * 60;
+          const [flat, flon] = destPoint(state.pos.lat, state.pos.lon, state.pos.heading, d);
+          const ahead = nearestCounty(flat, flon);
+          if(ahead && ahead.name !== here.name){
+            const as = slotNow(ahead);
+            if(as) line += '<br><span style="color:var(--panel-sub)">前方 ' + ahead.name + '</span> ' + (as.wx||'') +
+              ' ｜ <b style="color:' + popTone(as.pop) + '">' + (as.pop==null?'—':as.pop+'%') + '</b>';
+          }
+        }
+        parts.push('<div style="font-size:12.5px;margin-top:' + (nc ? '3px' : '0') + '">' + line + '</div>');
+      } else if(!nc){
+        parts.push('<div style="font-size:12px;color:var(--warn)">⚠️ 縣市降雨預報資料過期（最後更新 ' +
+          (fmtAge(forecastUpdatedMs) || '未知') + '）</div>');
+      }
     }
   }
-  html += '<br><span style="color:var(--panel-sub);font-size:11px">中央氣象署鄉鎮預報（縣市級、每 3 小時、約 6 小時更新）</span>';
-  el.innerHTML = html;
+
+  if(!parts.length){ el.hidden = true; return; }
+  el.innerHTML = parts.join('');
   el.hidden = false;
 }
 
@@ -467,12 +572,33 @@ document.addEventListener('visibilitychange', () => {
   if(document.visibilityState === 'visible' && state.wakeWanted && !state.wakeLock) requestWake();
 });
 
-/* 圖例 */
-(function buildLegend(){
-  document.getElementById('legend-rows').innerHTML = CWA_SCALE.map(r =>
-    `<div class="row"><span class="sw" style="background:rgb(${r[0]},${r[1]},${r[2]})"></span>${r[3]} dBZ · ${r[4]}</div>`
-  ).join('');
-})();
+/* 圖例（依目前雷達來源切換）*/
+const RAINBOW_SCALE = [
+  ['rgb(160,217,255)', '毛毛雨 / 小雨'],
+  ['rgb(90,160,255)',  '小雨 → 中雨'],
+  ['rgb(43,112,254)',  '中雨'],
+  ['rgb(27,73,218)',   '大雨'],
+  ['rgb(83,68,225)',   '大雨 → 豪雨'],
+  ['rgb(150,74,243)',  '劇烈'],
+];
+function reflectHint(){
+  const el = document.getElementById('modehint');
+  if(!el) return;
+  el.textContent = radarMode === 'rainbow'
+    ? '時間軸可往未來播 2 小時（Rainbow 預報）。橘點 = 推算的前方位置，拿去對雨帶。'
+    : '播放時間軸看過去雨帶往哪移動。台灣此模式沒有未來雷達，只有觀測＋上方降雨機率。';
+}
+function renderLegend(){
+  const rb = radarMode === 'rainbow';
+  document.getElementById('legend-title').textContent = rb ? '降水預報強度（Rainbow）' : '雷達回波強度';
+  document.getElementById('legend-rows').innerHTML = rb
+    ? RAINBOW_SCALE.map(r => `<div class="row"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join('')
+    : CWA_SCALE.map(r => `<div class="row"><span class="sw" style="background:rgb(${r[0]},${r[1]},${r[2]})"></span>${r[3]} dBZ · ${r[4]}</div>`).join('');
+  document.getElementById('legend-src').textContent = rb
+    ? '資料：Rainbow Weather（衛星＋雷達 ML 預測，未來 2 小時）'
+    : (radarMode === 'rv' ? '資料：RainViewer（觀測，後備源）' : '資料：中央氣象署 整合雷達回波圖（觀測）');
+}
+renderLegend();
 
 /* 綁定 */
 document.getElementById('play').onclick = togglePlay;
@@ -480,7 +606,7 @@ document.getElementById('slider').oninput = e => { if(state.playing) togglePlay(
 document.getElementById('btn-follow').onclick = () => setFollow(!state.followMode);
 document.getElementById('btn-now').onclick = () => {
   if(state.playing) togglePlay();
-  showFrame(state.frames.length - 1);
+  showFrame(state.nowIdx);
   if(state.pos) setFollow(true);
 };
 document.getElementById('btn-wake').onclick = toggleWake;
@@ -499,6 +625,7 @@ loadForecast();
 requestWake();
 setInterval(loadRadarIndex, RADAR_REFRESH_MS);
 setInterval(loadForecast, FORECAST_REFRESH_MS);
+setInterval(() => loadNowcast(false), NOWCAST_REFRESH_MS);
 </script>
 </body>
 </html>
