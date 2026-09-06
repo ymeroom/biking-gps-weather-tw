@@ -118,6 +118,14 @@ wrangler deploy
 
 驗證：Rainbow 圖磚 35 張全載入 0 破圖、fallback Rainbow→CWA 正常切、圖例/提示隨模式切換、`#ghosthint [hidden]` bug 修掉、console 無錯。
 
+**advisor 第二輪（手機檢視）修正（2026-09-06）**：
+- **nowcast 面板加「此處」**：`此處未來 2 小時無雨` / `此處約 25 分鐘後開始下中雨`。那句只算 GPS 點、不是前方路徑，加粗headline容易被騎士誤讀成「不會淋到雨」。
+- **播放時立刻換圖層**：`showFrame` 在 `state.playing` 時直接 `dropPrev()`，不等 `once('load')`。慢網路（4G 山谷）下 700ms 播放間隔 < tile 載入時間 → 舊 fallback 2500ms deadline 會讓 3–4 層 0.62 opacity 疊在一起糊掉。實測改後播放中只有 1 層。
+- **幽靈點標籤**：`+10`/`+20` 只留小小分鐘數（`.ghost-label-mini`），`+30` 才掛完整「+30分 · X km」。窄螢幕（360px）低 zoom（z8–9）三個 `nowrap` 標籤會疊成一團。
+- **移除 `RAINBOW_PAST_S`**：`nowFt = round((now-snapshot)/600)*600`，snapshot 落後 15–25 分 → nowFt 通常 1200–1800，`max(0, nowFt-3600)` 永遠是 0。過去段實際只有 ~20 分（= nowFt），不是文件說的 1 小時。文件改成誠實說法。
+- 手機視窗實測（360–402px）：面板佔螢幕 23–26%（最壞含 ghosthint），ctl-row 5 顆按鈕單行不 wrap。OK。
+- **仍待真機測**：`coords.heading`/`speed` 在實際騎乘速度下到底會不會有值（兩輪前就提的，還沒跑過硬體路徑）；4G 下播放實感。
+
 ---
 
 ### Step 5：showFrame 支援 Rainbow 圖磚 + 時間軸標記 + 圖例
