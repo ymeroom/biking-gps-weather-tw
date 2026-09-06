@@ -97,6 +97,9 @@
 
 <div id="legend" hidden>
   <h4 id="legend-title">雷達回波強度</h4>
+  <div id="legend-warn" hidden style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgba(224,122,0,.14);color:var(--warn);font-size:11.5px;line-height:1.4">
+    ⚠️ Rainbow 預報強度可能偏低（實測比對：東北風型降雨北海岸一帶低估數倍到數十倍）。實際請以雷達實況／體感為準。
+  </div>
   <div id="legend-rows"></div>
   <div id="legend-src" style="margin-top:6px;color:var(--panel-sub)"></div>
 </div>
@@ -605,6 +608,7 @@ function renderLegend(){
   document.getElementById('legend-rows').innerHTML = rb
     ? RAINBOW_SCALE.map(r => `<div class="row"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join('')
     : CWA_SCALE.map(r => `<div class="row"><span class="sw" style="background:rgb(${r[0]},${r[1]},${r[2]})"></span>${r[3]} dBZ · ${r[4]}</div>`).join('');
+  document.getElementById('legend-warn').hidden = !rb;
   document.getElementById('legend-src').textContent = rb
     ? '資料：Rainbow Weather（衛星＋雷達 ML 預測，未來 2 小時）'
     : (radarMode === 'rv' ? '資料：RainViewer（觀測，後備源）' : '資料：中央氣象署 整合雷達回波圖（觀測）');

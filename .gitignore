@@ -2,6 +2,8 @@
 *.png
 *.jpg
 *.mp4
+# 例外：計劃書／校正筆記的佐證圖表要進版控
+!plans/assets/**
 .DS_Store
 Thumbs.db
 scratch/
