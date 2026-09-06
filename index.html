@@ -123,6 +123,7 @@
     <button id="btn-now">⏱️ 回到最新</button>
     <button id="btn-wake">💡 螢幕常亮</button>
     <button id="btn-dark">🌙 深色底圖</button>
+    <button id="btn-src">🌧️ 雷達源</button>
     <button id="btn-legend">🎨 圖例</button>
   </div>
 </div>
@@ -299,13 +300,16 @@ function updateGhosts(){
 }
 
 /* ───────────────────────── 雷達圖層（Rainbow 未來預報 → CWA 觀測 → RainViewer）───────────────────────── */
-let radarMode = 'cwa';        // 'rainbow' | 'cwa' | 'rv'
+let radarMode = 'cwa';        // 'rainbow' | 'cwa' | 'rv'（實際跑出來的）
+/* 使用者手動偏好：null = 自動（Rainbow 優先）、'cwa' = 強制 CWA 觀測。
+   RainViewer 不進手動循環，只當自動後備。存 localStorage，重整／重開 App 也維持。 */
+let userRadarPref = (() => { try{ return localStorage.getItem('radarPref') || null; }catch(_){ return null; } })();
 let cwaBounds = [[20.5,118.0],[26.5,124.0]];
 let rvHost = '';
 
 async function loadRadarIndex(){
-  // 先試 Rainbow（有未來預報）
-  if(RAINBOW_PROXY){
+  // 先試 Rainbow（有未來預報）—— 除非使用者強制 CWA
+  if(RAINBOW_PROXY && userRadarPref !== 'cwa'){
     try{
       const { snapshot } = await fetch(RAINBOW_PROXY + '/snapshot?layer=precip', {cache:'no-store'})
         .then(r => { if(!r.ok) throw new Error('snapshot HTTP ' + r.status); return r.json(); });
@@ -353,6 +357,7 @@ async function loadRadarIndex(){
       adoptFrames(frames, '雷達：<b>' + frames[frames.length-1].label + '</b> RainViewer後備');
     }catch(rvErr){
       document.getElementById('chip-cwa').innerHTML = '雷達：<b style="color:#ff9a9a">失敗</b>';
+      reflectSrcBtn();
       toast('⚠️ 取不到雷達資料。CWA：' + cwaErr.message + '；RainViewer：' + rvErr.message, 6000);
     }
   }
@@ -372,6 +377,7 @@ function adoptFrames(frames, chipHtml, nowIdx){
     ('雷達：<b>' + frames[frames.length-1].label + ' 更新</b>');
   if(typeof renderLegend === 'function') renderLegend();
   reflectHint();
+  reflectSrcBtn();
   showFrame(target);
 }
 function showFrame(i){
@@ -603,6 +609,19 @@ function reflectHint(){
     ? '時間軸可往未來播 2 小時（Rainbow 預報）。橘點 = 推算的前方位置，拿去對雨帶。'
     : '播放時間軸看過去雨帶往哪移動。台灣此模式沒有未來雷達，只有觀測＋上方降雨機率。';
 }
+function reflectSrcBtn(){
+  const b = document.getElementById('btn-src');
+  if(!b) return;
+  b.textContent = radarMode === 'rainbow' ? '🌧️ Rainbow 預報'
+    : radarMode === 'rv' ? '📡 RainViewer' : '📡 CWA 觀測';
+  b.classList.toggle('on', userRadarPref === 'cwa');   // 手動鎖 CWA 時高亮
+}
+function setRadarPref(pref){
+  userRadarPref = pref;
+  try{ pref ? localStorage.setItem('radarPref', pref) : localStorage.removeItem('radarPref'); }catch(_){}
+  toast(pref === 'cwa' ? '雷達切到 CWA 觀測（10 分更新，無未來預報）' : '雷達切回 Rainbow 預報', 2600);
+  loadRadarIndex();
+}
 function renderLegend(){
   const rb = radarMode === 'rainbow';
   document.getElementById('legend-title').textContent = rb ? '降水預報強度（Rainbow）' : '雷達回波強度';
@@ -627,6 +646,7 @@ document.getElementById('btn-now').onclick = () => {
 };
 document.getElementById('btn-wake').onclick = toggleWake;
 document.getElementById('btn-dark').onclick = () => setDarkBase(!darkBase);
+document.getElementById('btn-src').onclick = () => setRadarPref(userRadarPref === 'cwa' ? null : 'cwa');
 document.getElementById('btn-legend').onclick = () => {
   const l = document.getElementById('legend'); l.hidden = !l.hidden;
   document.getElementById('btn-legend').classList.toggle('on', !l.hidden);
@@ -635,6 +655,7 @@ document.getElementById('btn-legend').onclick = () => {
 /* ───────────────────────── 啟動 ───────────────────────── */
 setDarkBase(darkBase);
 reflectWakeBtn();
+reflectSrcBtn();
 startGeo();
 loadRadarIndex();
 loadForecast();
