@@ -75,6 +75,7 @@
   .ghost-dot{width:13px;height:13px;background:#ff8f00cc;border:2px dashed #fff;border-radius:50%;box-shadow:0 0 0 1px #0005}
   .ghost-label{background:#ff8f00;color:#fff;font-size:10.5px;font-weight:800;padding:1px 5px;border-radius:5px;white-space:nowrap;
     transform:translate(9px,-7px);box-shadow:0 1px 4px #0005}
+  .ghost-label-mini{padding:0 3px;font-size:9px;transform:translate(8px,-6px);opacity:.9}
 
   .leaflet-control-attribution{font-size:9px}
   body.dark-base .base-osm{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9) saturate(.4)}
@@ -136,7 +137,8 @@ const RV_MANIFEST = 'https://api.rainviewer.com/public/weather-maps.json';
 const RAINBOW_PROXY = 'https://rainbow-proxy.ymeroom.workers.dev';
 const RAINBOW_MAX_NATIVE_ZOOM = 8;  // z8 足夠判讀，省 16 倍圖磚量／額度
 const RAINBOW_FUTURE_S = 7200;      // 往未來取到 +2 小時
-const RAINBOW_PAST_S = 3600;        // 往過去取 1 小時當 context
+/* 過去那段：Rainbow 只給 forecast_time >= 0，而 snapshot 本身落後現在約 15–25 分，
+   所以「現在」之前只有 snapshot→now 這 15–25 分鐘可看，沒辦法再往前。 */
 const RADAR_OPACITY = 0.62;
 const RADAR_REFRESH_MS = 180000;   // 每 3 分重抓
 const FORECAST_REFRESH_MS = 900000; // 每 15 分重抓鄉鎮預報（CWA 約 6 小時更新一次）
@@ -277,11 +279,16 @@ function updateGhosts(){
     return;
   }
   if(gh) gh.hidden = true;
-  GHOST_MINS.forEach(min => {
+  GHOST_MINS.forEach((min, i) => {
     const dist = p.speed * min * 60;
     const [glat, glon] = destPoint(p.lat, p.lon, p.heading, dist);
+    // 只有最遠那點掛完整標籤，其他只留小小的分鐘數 —— 手機窄螢幕、低 zoom 時三個 nowrap 標籤會疊在一起
+    const last = i === GHOST_MINS.length - 1;
+    const label = last
+      ? '<div class="ghost-label">+' + min + '分 · ' + (dist/1000).toFixed(1) + ' km</div>'
+      : '<div class="ghost-label ghost-label-mini">' + min + '</div>';
     const m = L.marker([glat, glon], {icon: L.divIcon({className:'', html:
-      '<div class="ghost-dot"></div><div class="ghost-label">+' + min + '分 · ' + (dist/1000).toFixed(1) + ' km</div>',
+      '<div class="ghost-dot"></div>' + label,
       iconSize:[13,13], iconAnchor:[7,7]}), zIndexOffset:900, interactive:false}).addTo(map);
     ghostMarkers.push(m);
   });
@@ -301,7 +308,7 @@ async function loadRadarIndex(){
       if(!snapshot) throw new Error('無 snapshot');
       const nowFt = Math.max(0, Math.round((Date.now()/1000 - snapshot) / 600) * 600);
       const frames = [];
-      for(let ft = Math.max(0, nowFt - RAINBOW_PAST_S); ft <= nowFt + RAINBOW_FUTURE_S; ft += 600){
+      for(let ft = 0; ft <= nowFt + RAINBOW_FUTURE_S; ft += 600){
         const ms = (snapshot + ft) * 1000;
         frames.push({ src:'rainbow', snapshot, ft, ms, label: twLabel(ms), isForecast: ft > nowFt });
       }
@@ -383,8 +390,12 @@ function showFrame(i){
   }
   radarLayer.addTo(map);
   const dropPrev = () => { if(prev && prev !== radarLayer && map.hasLayer(prev)) map.removeLayer(prev); };
-  radarLayer.once('load', dropPrev);
-  setTimeout(dropPrev, 2500);
+  if(state.playing){
+    dropPrev();               // 播放時立刻換掉舊圖層 —— 慢網路下寧可短暫空白也別讓多層疊在一起糊成一團
+  }else{
+    radarLayer.once('load', dropPrev);
+    setTimeout(dropPrev, 2500);
+  }
 
   const dMin = Math.round((f.ms - Date.now()) / 60000);
   let tag;
@@ -450,15 +461,15 @@ function nowcastLine(){
     let stop = -1;
     for(let i = 1; i < arr.length; i++){ if(!wet(arr[i])){ stop = i; break; } }
     const w = precipWord(arr[0].precipType, arr[0].precipRate);
-    if(stop < 0) return '🌧️ 正在下' + w + '，未來 2 小時不會停';
-    return '🌧️ 正在下' + w + '，約 ' + Math.round((arr[stop].timestampBegin*1000 - now)/60000) + ' 分鐘後轉小／停';
+    if(stop < 0) return '🌧️ 此處正在下' + w + '，未來 2 小時不會停';
+    return '🌧️ 此處正在下' + w + '，約 ' + Math.round((arr[stop].timestampBegin*1000 - now)/60000) + ' 分鐘後轉小／停';
   }
   let on = -1;
   for(let i = 0; i < arr.length; i++){ if(wet(arr[i])){ on = i; break; } }
-  if(on < 0) return '☀️ 未來 2 小時無雨';
+  if(on < 0) return '☀️ 此處未來 2 小時無雨';
   const m = Math.round((arr[on].timestampBegin*1000 - now)/60000);
-  if(m > 120) return '☀️ 未來 2 小時無雨';
-  return '🌧️ 約 ' + m + ' 分鐘後開始下' + precipWord(arr[on].precipType, arr[on].precipRate);
+  if(m > 120) return '☀️ 此處未來 2 小時無雨';
+  return '🌧️ 此處約 ' + m + ' 分鐘後開始下' + precipWord(arr[on].precipType, arr[on].precipRate);
 }
 function nearestCounty(lat, lon){
   if(!forecastData || !forecastData.length) return null;
@@ -491,7 +502,7 @@ function renderForecast(){
 
   const nc = nowcastLine();
   if(nc) parts.push('<div style="font-weight:700">' + nc +
-    ' <span style="color:var(--panel-sub);font-weight:400;font-size:11px">你的位置 · Rainbow</span></div>');
+    ' <span style="color:var(--panel-sub);font-weight:400;font-size:11px">（前方看時間軸未來影格＋橘點）</span></div>');
 
   if(forecastData && forecastData.length){
     const here = nearestCounty(state.pos.lat, state.pos.lon);
