@@ -2,7 +2,7 @@
 
 > 建立時間：2026-09-06 01:25
 > 類型：新功能（在已上線的 v1b 上疊加）
-> 狀態：Worker 已寫好（`worker/`），等使用者 `wrangler deploy` 後接前端
+> 狀態：✅ 已上線（2026-09-06）。Worker 部署於 rainbow-proxy.ymeroom.workers.dev，前端 Step 4–7 完成並本機驗證通過
 > 溝通模式：半技術
 
 ---
@@ -105,6 +105,20 @@ wrangler deploy
   - 沿用現有 `adoptFrames()` 的捲軸位置保留邏輯
 - 失敗才往下走 CWA `data` 分支 → RainViewer（現有邏輯）
 - 產出：Rainbow 影格索引
+
+### Step 4–7 ✅ 完成（2026-09-06，本機驗證通過）
+
+實作與計劃的差異：
+- **後備 429 處理**：Worker 目前沒有硬性每日上限（免費 KV 寫入限制），所以沒有 429 分支；只有「Rainbow fetch 失敗 → 自動掉 CWA」。額度靠架構層控制（z8、future-focused、`caches.default`）＋ 之後看 dashboard。
+- **時間軸**：過去 1h（`RAINBOW_PAST_S`）＋現在＋未來 2h（`RAINBOW_FUTURE_S`），共 ~14 格。`nowFt` 依 snapshot 與現在時間換算，`state.nowIdx` 指到「現在」那格，「回到最新」跳那裡不是最後一格。
+- **圖例**：Rainbow 圖磚是藍→靛→紫的強度漸層（不是 CWA 綠黃紅），`RAINBOW_SCALE` 是從實際圖磚取樣估的，遇到大雨看到別的顏色再修。
+- **nowcast 節流**：20 分鐘 or 移動 1.5km 才重打（`roughDistM`）；`onPos` 每次呼叫 `loadNowcast(false)` 由函式自己擋，另加 5 分鐘 interval 當靜止時的 backstop。
+- **面板**：頭條 = `nowcactLine()`（🌧️ 約 25 分鐘後開始下中雨 / ☀️ 未來 2 小時無雨），第二行 = CWA 縣市機率（灰字）。
+- **chip**：`雷達：Rainbow 預報` / `雷達：<time> CWA觀測` / `雷達：<time> RainViewer後備`。
+
+驗證：Rainbow 圖磚 35 張全載入 0 破圖、fallback Rainbow→CWA 正常切、圖例/提示隨模式切換、`#ghosthint [hidden]` bug 修掉、console 無錯。
+
+---
 
 ### Step 5：showFrame 支援 Rainbow 圖磚 + 時間軸標記 + 圖例
 - `if(radarMode === 'rainbow') radarLayer = L.tileLayer(PROXY + '/tile/' + f.snapshot + '/' + f.ft + '/{z}/{x}/{y}', {opacity:RADAR_OPACITY, zIndex:400, maxNativeZoom:8, maxZoom:18})`（z8 就夠判讀，省 16 倍圖磚量）

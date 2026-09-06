@@ -1,25 +1,26 @@
 # 單車 GPS 降水地圖 — 台灣版
 
-騎車時打開的手機網頁：藍點跟著你的 GPS 移動，地圖疊上**雷達回波圖**，
-可以播放過去約 2 小時的動畫，看雨帶往哪移動、目測會不會掃到你。
+騎車時打開的手機網頁：藍點跟著你的 GPS 移動，地圖疊上**降水預報雷達**，
+時間軸可以往未來播 2 小時，看雨帶預測往哪移動、目測會不會掃到你。
 
 ## 跟日本版的差別
 
 日本版（`biking-gps-weather`）用 JMA 免費公開的「未來 2 小時雷達預報圖磚」。
-**台灣沒有等價的東西**：
+台灣**沒有免費公開的**等價資料——CWA 只有觀測回波，沒有未來。
+所以台灣版改用 **Rainbow Weather API**（付費，有免費額度）拿未來預報，
+CWA 觀測退居後備。演進過程：
 
-- 中央氣象署（CWA）的「整合雷達回波圖」是免費、但**海報式的固定範圍圖**
-  （有邊框、圖例、logo 燒在圖上，投影也對不齊），沒辦法精準疊在地圖上，
-  而且**只有觀測、沒有未來預報**。
-- 要精準疊圖需要 CWA 開放資料的正規 GeoTIFF（需申請免費 API key）—— 留到 v1b。
+**v1c（現行）**：接上 **Rainbow Weather API**（衛星＋雷達的 ML nowcast），
+時間軸終於能往**未來播 2 小時**——跟日本版一樣的降水預報動畫。
+金鑰藏在一個 Cloudflare Worker 代理（`worker/`）後面，前端只打 Worker。
+降雨面板頭條改成 Rainbow 點位 nowcast「約 25 分鐘後開始下中雨」，CWA 縣市機率降為背景參考。
+Rainbow 掛掉自動退回 v1b 的 CWA 觀測。
 
-**v1b（現行）**：GitHub Actions 每 ~12 分鐘抓 CWA 開放資料的
-`O-A0058-003`「雷達整合回波圖-臺灣(鄰近地區)_無地形」（有官方標註範圍、S3 直連有 CORS），
-透明化後存進孤兒分支 `data`，網站從 `raw.githubusercontent.com` 讀來做過去約 2–3 小時的動畫。
-另外抓 `F-D0047-089` 縣市 3 小時降雨機率預報，做成「你所在／前方縣市未來降雨機率」文字面板。
-CWA data 分支還沒建好或抓失敗時，自動退回 RainViewer。
+**v1b**：GitHub Actions 每 ~12 分鐘抓 CWA 開放資料的
+`O-A0058-003`「雷達整合回波圖-臺灣(鄰近地區)_無地形」，透明化後存進孤兒分支 `data`，
+過去約 2–3 小時的觀測動畫。另抓 `F-D0047-089` 縣市 3 小時降雨機率。**v1c 之後當後備源。**
 
-**v1a（初版，已被 v1b 取代）**：只有 RainViewer 觀測回波動畫。
+**v1a（初版）**：只有 RainViewer 觀測回波動畫。
 
 ## 使用方式
 
@@ -36,18 +37,22 @@ CWA data 分支還沒建好或抓失敗時，自動退回 RainViewer。
 - **藍點＋三角形**：你目前的位置與行進方向；外圈是定位精度。
 - **橘色虛線點（+10/+20/+30 分）**：照你現在的方向與速度推算的前方位置。
   拿它去對照雷達回波，目測「我到那裡時雨帶到哪了」。靜止時不顯示。
-- **時間軸**：RainViewer 觀測回波，過去約 2 小時、每 10 分鐘一格，可播放。**沒有未來**。
-- **前方縣市降雨面板**：中央氣象署鄉鎮預報（縣市級、每 3 小時一格、約 6 小時更新一次）。
-  顯示你所在縣市當前 3 小時的降雨機率與天氣；若 +30 分推算位置跨到別的縣市，也一併顯示。
-  ⚠️ 這是**縣市級文字預報**，不是即時雷達，別混用。
-- **雷達 XX:XX 更新**：CWA 每 ~10 分鐘更新，GitHub Actions 每 ~12 分鐘抓，本 App 每 3 分鐘重讀。
+- **時間軸**：過去 1 小時觀測 ＋ 現在 ＋ **未來 2 小時預報**（Rainbow），每 10 分鐘一格，可播放。
+  標籤區分「觀測」「+N 分 · 預報」；+90 分後標「僅供參考」（ML nowcast 越久越糊）。
+  Rainbow 掛掉時退回 CWA，就只剩過去、沒有未來。
+- **降雨面板**：頭條是 Rainbow 點位 nowcast「約 25 分鐘後開始下中雨」/「未來 2 小時無雨」（你的實際位置）。
+  第二行是 CWA 縣市 3 小時降雨機率（背景參考，縣市級文字預報，別跟雷達混用）。
+- **雷達來源標籤**：`Rainbow 預報` / `<time> CWA觀測` / `<time> RainViewer後備`，看目前用哪個源。
 - **🌙 深色底圖 / 💡 螢幕常亮**：傍晚騎乘用。iOS Safari 沒有螢幕常亮 API，按鈕會顯示「不支援」，
   請改到 iPhone 設定 →「螢幕顯示與亮度」→「自動鎖定」調長或關掉。
 
 ## 技術
 
 - 單一 `index.html`，無 build step。Leaflet 1.9.4 + OpenStreetMap 底圖。
-- **雷達**：CWA `O-A0058-003`（`https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-003.png`，
+- **未來預報雷達（主）**：Rainbow Weather API `tiles/v1/precip`，未來 4 小時、每 10 分鐘、
+  透明 PNG 圖磚，經 `worker/`（Cloudflare Worker）代理。金鑰存 Worker secret（見 `worker/README.md`）。
+  前端 `RAINBOW_PROXY` 指向 `https://rainbow-proxy.ymeroom.workers.dev`。
+- **觀測雷達（後備）**：CWA `O-A0058-003`（`https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-003.png`，
   官方範圍 `118–124°E, 20.5–26.5°N`，S3 有 CORS）。
   - `.github/workflows/fetch-cwa.yml` 每 ~12 分抓一張 → `scripts/fetch_cwa.py` 灰底透明化、縮 1800px
     → force-push 到孤兒分支 `data`（永遠 1 個 commit，git 歷史不長胖），保留最近 18 張。
@@ -59,20 +64,27 @@ CWA data 分支還沒建好或抓失敗時，自動退回 RainViewer。
 
 ## 部署 / 維護
 
-- `CWA_KEY` 存在 GitHub repo 的 **Actions secret**（`gh secret set CWA_KEY`），不會出現在原始碼或 commit。
-- 手動觸發抓資料：`gh workflow run fetch-cwa.yml`（或 GitHub 網頁 Actions 頁）。
-- 若 CWA 改端點格式：改 `scripts/fetch_cwa.py`；若改 dBZ 色階：改 `index.html` 的 `CWA_SCALE`。
+- **Rainbow 金鑰**：存在 Cloudflare Worker secret（`cd worker && wrangler secret put RAINBOW_KEY`），
+  不在原始碼或 commit。改金鑰：再 `wrangler secret put` 一次即可，不用 redeploy。
+- **改 Worker**：`cd worker && wrangler deploy`。允許來源清單在 `worker/src/index.js` 的 `ALLOW`。
+- **停用 Rainbow**：把 `index.html` 的 `RAINBOW_PROXY` 設成 `''`，自動退回 CWA。
+- **看 Rainbow 用量**：rainbow.ai developer portal（免費 30k 圖磚／5k nowcast 每月，超量計費）。
+- `CWA_KEY` 存在 GitHub repo 的 **Actions secret**（`gh secret set CWA_KEY`）。
+- 手動觸發 CWA 抓資料：`gh workflow run fetch-cwa.yml`。
+- 若 CWA 改端點格式：改 `scripts/fetch_cwa.py`；改 dBZ 色階：改 `index.html` 的 `CWA_SCALE`；
+  改 Rainbow 色階：改 `index.html` 的 `RAINBOW_SCALE`。
 
-## v1c 可能的下一步
+## 可能的下一步
 
-- 縣市級 → 鄉鎮級預報（要打 22 個 `F-D0047-001..-087` 分縣檔）
-- 研究 CWA 是否有更即時的 0–3 小時定量降水預報（QPF）可用
-- 沿實際路線（會轉彎）推算前方位置
+- Rainbow 色階校準（等遇到大雨看實際圖磚）
+- 縣市級 → 鄉鎮級 CWA 預報（打 22 個 `F-D0047-001..-087` 分縣檔）
+- 沿實際路線（會轉彎）推算前方位置，不只直線
+- Worker 每日用量硬上限（若 dashboard 顯示用量偏高）
 
 ## 不包含
 
 - 台灣以外
-- 真正的「未來雷達回波動畫」（台灣沒有免費公開資料）
+- 未來 2–4 小時那段（ML nowcast 太糊，只做到 +2h）
 - 離線快取、航跡記錄
 - 跟日本版共用 repo／程式
 
