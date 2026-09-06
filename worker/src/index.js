@@ -86,6 +86,9 @@ export default {
       return reply("not found", 404, origin);
     }
 
+    if (!env.RAINBOW_KEY)
+      return reply("worker misconfigured: RAINBOW_KEY secret not set", 500, origin);
+
     const cache = caches.default;
     const cacheKey = new Request(url.toString(), { method: "GET" });
     if (cacheable) {
@@ -93,16 +96,22 @@ export default {
       if (hit) return hit;
     }
 
+    const upReq = new Request(upstream, {
+      headers: {
+        "Ocp-Apim-Subscription-Key": env.RAINBOW_KEY.trim(),
+        "Accept": cacheable ? "image/png" : "application/json",
+        "User-Agent": "biking-gps-weather-tw-proxy",
+      },
+    });
+
     let up;
     try {
-      up = await fetch(upstream, {
-        headers: { "Ocp-Apim-Subscription-Key": env.RAINBOW_KEY },
-        cf: cacheable
-          ? { cacheEverything: true, cacheTtl: 7200 }
-          : { cacheTtl: 0 },
-      });
+      up = await fetch(
+        upReq,
+        cacheable ? { cf: { cacheEverything: true, cacheTtl: 7200 } } : undefined,
+      );
     } catch (e) {
-      return reply("upstream error", 502, origin);
+      return reply("upstream fetch failed: " + (e && e.message), 502, origin);
     }
 
     const buf = await up.arrayBuffer();
@@ -118,6 +127,7 @@ export default {
         ? "public, max-age=7200, immutable"
         : "public, max-age=90",
     );
+    if (!up.ok) headers.set("X-Upstream-Status", String(up.status));
 
     const out = new Response(buf, { status: up.status, headers });
     if (cacheable && up.ok) ctx.waitUntil(cache.put(cacheKey, out.clone()));
