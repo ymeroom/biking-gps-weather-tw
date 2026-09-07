@@ -1,0 +1,14 @@
+*.iml
+.gradle/
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+/app/build/
+/app/release/
+# Android 資源圖檔要進版控（外層 .gitignore 全域擋 *.png/*.jpg，這裡放行）
+!**/src/main/res/**/*.png
+!**/src/main/res/**/*.webp

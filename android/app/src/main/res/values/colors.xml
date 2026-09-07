@@ -1,0 +1,10 @@
+<resources>
+    <color name="green">#1B8A3A</color>
+    <color name="amber">#E0A100</color>
+    <color name="red">#D32F2F</color>
+    <color name="panel_text">#FFFFFF</color>
+    <color name="ic_bg">#0B1220</color>
+
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

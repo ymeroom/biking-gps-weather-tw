@@ -1,0 +1,25 @@
+<resources>
+    <string name="app_name">騎車降雨浮窗</string>
+
+    <string name="dest_hint">目的地（地名，或 緯度,經度）</string>
+    <string name="use_current">用目前位置當終點測試</string>
+    <string name="start">開始</string>
+    <string name="stop">結束</string>
+    <string name="sound_toggle">變紅時 震動＋提示音</string>
+
+    <string name="perm_location_title">需要定位權限</string>
+    <string name="perm_location_msg">要沿路線判斷前方有沒有雨，需要「始終允許」的定位權限。</string>
+    <string name="perm_overlay_title">需要「顯示在其他 App 上層」</string>
+    <string name="perm_overlay_msg">紅綠燈小方塊要浮在 Google 地圖上面，請在接下來的畫面把本 App 打開。</string>
+    <string name="perm_battery_title">建議關閉電池最佳化</string>
+    <string name="perm_battery_msg">三星等手機的省電機制會在背景把 App 凍結，導致浮窗不更新。建議把本 App 設為不受限制。</string>
+    <string name="go_settings">前往設定</string>
+    <string name="later">稍後</string>
+
+    <string name="notif_channel">騎乘中</string>
+    <string name="notif_title">騎車降雨浮窗 運作中</string>
+
+    <string name="status_green">未來 1 小時 路上不會下雨</string>
+    <string name="status_waiting">定位中…</string>
+    <string name="status_nodata">雨資料暫時取不到</string>
+</resources>
