@@ -15,21 +15,32 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.braintaiwan.rainpanel.databinding.ActivityMainBinding
 import java.util.Locale
 
+/**
+ * 設定目的地、走完權限、開始/結束騎乘。
+ *
+ * 權限流程：按「開始」後設 [startRequested]，[advance] 依序檢查各項權限，
+ * 遇到缺的就要求（或跳系統設定）並 return；使用者從系統設定回來時 onResume 會再呼叫
+ * [advance] 接著往下——所以「按一次開始就一路帶到底」，不用重按。
+ */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
+    private var startRequested = false
+    private var batteryPrompted = false
+    private var dialog: AlertDialog? = null
 
     private val locationPerm = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { proceedAfterLocation() }
+    ) { advance() }
 
     private val notifPerm = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { proceedAfterNotif() }
+    ) { advance() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,25 +55,87 @@ class MainActivity : AppCompatActivity() {
 
         b.useCurrentBtn.setOnClickListener { useCurrentAsDest() }
         b.startStopBtn.setOnClickListener {
-            if (RideService.running) stopRide() else startRideFlow()
+            if (RideService.running) {
+                stopRide()
+            } else {
+                saveDestinationFromInput()
+                startRequested = true
+                batteryPrompted = false
+                advance()
+            }
         }
+        b.statusText.setOnClickListener { openAppSettings() } // 點狀態列 → App 設定，手動調權限
     }
 
     override fun onResume() {
         super.onResume()
         refreshUi()
+        if (startRequested && !RideService.running) advance()
     }
 
-    private fun refreshUi() {
-        b.startStopBtn.text = getString(if (RideService.running) R.string.stop else R.string.start)
-        val sb = StringBuilder()
-        sb.append("定位權限：").append(if (hasLocation()) "已允許" else "未允許").append('\n')
-        sb.append("顯示在其他 App 上層：").append(if (canOverlay()) "已允許" else "未允許").append('\n')
-        sb.append("電池最佳化豁免：").append(if (batteryUnrestricted()) "已設定" else "未設定（背景可能被凍結）").append('\n')
-        Prefs.destination(this)?.let { (lat, lon, label) ->
-            sb.append("目的地：").append(label.ifEmpty { "%.4f, %.4f".format(lat, lon) })
-        } ?: sb.append("目的地：未設定（會改用前進方向）")
-        b.statusText.text = sb.toString()
+    /** 依序檢查權限：缺的就要求並 return；全通過就啟動。可重複呼叫（onResume 會再叫）。 */
+    private fun advance() {
+        if (!startRequested) return
+        if (dialog?.isShowing == true) return
+
+        if (!hasLocation()) {
+            showGate(R.string.perm_location_title, R.string.perm_location_msg, android.R.string.ok) {
+                locationPerm.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                    )
+                )
+            }
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+
+        if (!canOverlay()) {
+            showGate(R.string.perm_overlay_title, R.string.perm_overlay_msg, R.string.go_settings) {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName"),
+                    )
+                )
+            }
+            return
+        }
+
+        // 電池最佳化：建議但不強制。每次「開始」只提醒一次，之後照樣啟動。
+        if (!batteryUnrestricted() && !batteryPrompted) {
+            batteryPrompted = true
+            dialog = AlertDialog.Builder(this)
+                .setTitle(R.string.perm_battery_title)
+                .setMessage(R.string.perm_battery_msg)
+                .setPositiveButton(R.string.go_settings) { _, _ -> requestIgnoreBattery() }
+                .setNegativeButton(R.string.later) { _, _ -> advance() }
+                .setOnCancelListener { advance() }
+                .show()
+            return
+        }
+
+        startRequested = false
+        startRide()
+    }
+
+    /** 顯示一個「缺這個權限」的提示框；按確定跑 [onConfirm]，取消/稍後則放棄啟動。 */
+    private fun showGate(titleRes: Int, msgRes: Int, positiveRes: Int, onConfirm: () -> Unit) {
+        dialog = AlertDialog.Builder(this)
+            .setTitle(titleRes)
+            .setMessage(msgRes)
+            .setPositiveButton(positiveRes) { _, _ -> onConfirm() }
+            .setNegativeButton(R.string.later) { _, _ -> startRequested = false }
+            .setOnCancelListener { startRequested = false }
+            .show()
     }
 
     // ---- 權限狀態 ----
@@ -72,84 +145,48 @@ class MainActivity : AppCompatActivity() {
 
     private fun canOverlay() = Settings.canDrawOverlays(this)
 
+    private fun notificationsEnabled() = NotificationManagerCompat.from(this).areNotificationsEnabled()
+
     private fun batteryUnrestricted(): Boolean {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         return pm.isIgnoringBatteryOptimizations(packageName)
     }
 
-    // ---- 開始騎乘：逐項補齊權限 ----
-    private fun startRideFlow() {
-        if (!saveDestinationFromInput()) {
-            // 沒填目的地也允許（會用前進方向），但提示一下
+    private fun requestIgnoreBattery() {
+        runCatching {
+            @Suppress("BatteryLife")
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                )
+            )
+        }.onFailure {
+            runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
         }
-        if (!hasLocation()) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.perm_location_title)
-                .setMessage(R.string.perm_location_msg)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    locationPerm.launch(
-                        arrayOf(
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_COARSE_LOCATION,
-                        )
-                    )
-                }
-                .setNegativeButton(R.string.later, null)
-                .show()
-            return
-        }
-        proceedAfterLocation()
     }
 
-    private fun proceedAfterLocation() {
-        if (!hasLocation()) {
-            toast("沒有定位權限，無法判斷前方雨況")
-            return
+    private fun openAppSettings() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            )
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
-            return
-        }
-        proceedAfterNotif()
     }
 
-    private fun proceedAfterNotif() {
-        if (!canOverlay()) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.perm_overlay_title)
-                .setMessage(R.string.perm_overlay_msg)
-                .setPositiveButton(R.string.go_settings) { _, _ ->
-                    startActivity(
-                        Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:$packageName")
-                        )
-                    )
-                }
-                .setNegativeButton(R.string.later, null)
-                .show()
-            return
-        }
-        if (!batteryUnrestricted()) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.perm_battery_title)
-                .setMessage(R.string.perm_battery_msg)
-                .setPositiveButton(R.string.go_settings) { _, _ ->
-                    runCatching {
-                        startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                            Uri.parse("package:$packageName")))
-                    }.onFailure {
-                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                    }
-                }
-                .setNegativeButton(R.string.later) { _, _ -> startRide() }
-                .show()
-            return
-        }
-        startRide()
+    private fun refreshUi() {
+        b.startStopBtn.text = getString(if (RideService.running) R.string.stop else R.string.start)
+        val sb = StringBuilder()
+        sb.append("定位權限：").append(if (hasLocation()) "已允許" else "未允許").append('\n')
+        sb.append("通知：").append(if (notificationsEnabled()) "開啟" else "關閉（浮窗仍會顯示，但常駐通知看不到）").append('\n')
+        sb.append("顯示在其他 App 上層：").append(if (canOverlay()) "已允許" else "未允許").append('\n')
+        sb.append("電池最佳化豁免：")
+            .append(if (batteryUnrestricted()) "已設定" else "未設定（背景可能被凍結）").append('\n')
+        Prefs.destination(this)?.let { (lat, lon, label) ->
+            sb.append("目的地：").append(label.ifEmpty { "%.4f, %.4f".format(lat, lon) })
+        } ?: sb.append("目的地：未設定（會改用前進方向）")
+        sb.append("\n\n（點這段文字可開啟系統的 App 權限設定）")
+        b.statusText.text = sb.toString()
     }
 
     private fun startRide() {
@@ -162,6 +199,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopRide() {
         startService(Intent(this, RideService::class.java).setAction(RideService.ACTION_STOP))
+        startRequested = false
         refreshUi()
     }
 
@@ -171,7 +209,6 @@ class MainActivity : AppCompatActivity() {
         val raw = b.destInput.text.toString().trim()
         if (raw.isEmpty()) return false
 
-        // "緯度,經度"
         val parts = raw.split(",")
         if (parts.size == 2) {
             val lat = parts[0].trim().toDoubleOrNull()
@@ -182,7 +219,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 地名 → Geocoder（可能失敗）
         return runCatching {
             @Suppress("DEPRECATION")
             val res = Geocoder(this, Locale.TAIWAN).getFromLocationName(raw, 1)
