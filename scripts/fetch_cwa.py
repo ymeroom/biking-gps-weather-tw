@@ -101,3 +101,56 @@ json.dump({"updated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
            "counties": counties},
           open(f"{OUT}/forecast.json", "w"), ensure_ascii=False)
 print(f"forecast: {len(counties)} counties")
+
+
+# ── 3. 未來 1 小時雷達定量降雨預報（F-B0046-001）──────────────
+# 給「騎車降雨浮窗」Android App 用。CWA 這份是純文字網格，S3 直連免金鑰，
+# 每 10 分鐘更新。整份 247,401 格、2.7MB，這裡只挑出「有雨」的格子（沒下雨 = -99，
+# 沒有 0.0），縮成幾 KB 的 qpf.json 推到 data 分支，App 只讀這個。
+# 官方排列（contentDescription）：左下角為第一點 東經 117.975、北緯 19.975，
+#   先經向遞增（西→東），再緯向遞增（南→北）；-99 = 無效值；TWD67 網格。
+QPF_URL = "https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Forecast/F-B0046-001.json"
+QPF_MIN_MM = 0.1   # 低於這個值忽略（本來就沒有 0<x<0.1 的格子，純保險）
+
+# 先把上一輪的 qpf.json 帶過來，這輪抓失敗時至少留著舊的（App 自己會依 fetched 時間拒收太舊的）
+if os.path.exists(f"{PREV}/qpf.json") and not os.path.exists(f"{OUT}/qpf.json"):
+    shutil.copy(f"{PREV}/qpf.json", f"{OUT}/qpf.json")
+
+try:
+    qraw, _ = http_get(QPF_URL)
+    q = json.loads(qraw)
+    di = q["cwaopendata"]["dataset"]["datasetInfo"]
+    ps = di["parameterSet"]
+    nx, ny = int(ps["GridDimensionX"]), int(ps["GridDimensionY"])
+    res = float(ps["GridResolution"])
+    issued = ps["DateTime"]                       # 例 2026-09-07T23:50:00+08:00
+    grid = np.array(
+        q["cwaopendata"]["dataset"]["contents"]["content"].split(","), dtype=float
+    ).reshape(ny, nx)                             # grid[iy, ix]；iy=0 為南、ix=0 為西
+
+    iy_idx, ix_idx = np.where(grid >= QPF_MIN_MM)
+    mm = grid[iy_idx, ix_idx]
+    order = np.argsort(-mm)                       # 由大到小，方便 App 早退
+    json.dump({
+        "product": "F-B0046-001",
+        "desc": di.get("datasetDescription", "未來1小時雷達定量降雨預報"),
+        "issued": issued,
+        "fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "datum": "TWD67",
+        "originLon": 117.975, "originLat": 19.975,   # 左下角第一點（官方 contentDescription）
+        "res": res, "nx": nx, "ny": ny,
+        "order": "lonMajorSouthFirst",               # 先西→東，再南→北
+        "unit": "mmPerHour",
+        "ix": ix_idx[order].tolist(),
+        "iy": iy_idx[order].tolist(),
+        "mm": [round(float(x), 1) for x in mm[order]],
+    }, open(f"{OUT}/qpf.json", "w"))
+    print(f"qpf: {len(mm)} raining cells, issued {issued}, max {mm.max() if mm.size else 0:.1f}mm")
+except Exception as e:                               # QPF 失敗不影響雷達/預報
+    print(f"qpf: FAILED {type(e).__name__}: {e}")
+    if not os.path.exists(f"{OUT}/qpf.json"):
+        json.dump({"product": "F-B0046-001", "issued": None,
+                   "fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                   "error": f"{type(e).__name__}: {e}",
+                   "ix": [], "iy": [], "mm": []},
+                  open(f"{OUT}/qpf.json", "w"))
