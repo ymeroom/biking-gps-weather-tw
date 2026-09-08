@@ -77,7 +77,7 @@ class RideService : Service() {
             this, NOTIF_ID, buildNotification(getString(R.string.status_waiting)),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
         )
-        overlay = OverlayController(this)
+        overlay = OverlayController(this) { stopSelf() }
         overlay.show()
         overlay.render(Assessment(Light.WAITING, getString(R.string.status_waiting)))
 
@@ -148,6 +148,11 @@ class RideService : Service() {
             val ch = NotificationChannel(CHANNEL, getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
+        val stopIntent = android.app.PendingIntent.getService(
+            this, 1,
+            Intent(this, RideService::class.java).setAction(ACTION_STOP),
+            android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, CHANNEL)
             .setContentTitle(getString(R.string.notif_title))
             .setContentText(text)
@@ -159,6 +164,7 @@ class RideService : Service() {
                     android.app.PendingIntent.FLAG_IMMUTABLE
                 )
             )
+            .addAction(0, getString(R.string.stop), stopIntent)
             .build()
     }
 
