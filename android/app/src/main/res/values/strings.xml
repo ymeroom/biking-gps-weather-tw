@@ -19,7 +19,7 @@
     <string name="notif_channel">騎乘中</string>
     <string name="notif_title">騎車降雨浮窗 運作中</string>
 
-    <string name="status_green">未來 1 小時 路上不會下雨</string>
+    <string name="status_green">未來 1 小時 路上大致無雨</string>
     <string name="status_waiting">定位中…</string>
     <string name="status_nodata">雨資料暫時取不到</string>
 </resources>
