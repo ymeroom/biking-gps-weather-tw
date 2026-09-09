@@ -5,7 +5,7 @@
   灰底透明化只留彩色回波，縮到 1800px，保留最近 18 張做動畫。
 - 預報：F-D0047-089 縣市層級「3小時降雨機率 / 天氣現象」，需 CWA_KEY。
 """
-import os, io, json, glob, shutil, datetime, urllib.request, urllib.parse
+import os, io, json, glob, math, shutil, datetime, urllib.request, urllib.parse
 import numpy as np
 from PIL import Image
 
@@ -112,9 +112,25 @@ print(f"forecast: {len(counties)} counties")
 QPF_URL = "https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Forecast/F-B0046-001.json"
 QPF_MIN_MM = 0.1   # 低於這個值忽略（本來就沒有 0<x<0.1 的格子，純保險）
 
-# 先把上一輪的 qpf.json 帶過來，這輪抓失敗時至少留著舊的（App 自己會依 fetched 時間拒收太舊的）
-if os.path.exists(f"{PREV}/qpf.json") and not os.path.exists(f"{OUT}/qpf.json"):
-    shutil.copy(f"{PREV}/qpf.json", f"{OUT}/qpf.json")
+# TWD67 網格 → WGS84 的近似平移（約 +810m 東、+210m 北）。這個尺度（半格）對
+# 「哪一格」判讀是雜訊，但方向與 Android app 的 Geo.kt 對齊；待實測雷達校正。
+QPF_DLAT, QPF_DLON = 0.0019, 0.0081
+
+# mm/1h → 顏色（RGB）。**改這裡要同步改 index.html 的 QPF_SCALE**。
+QPF_SCALE = [
+    (0.1, 1,    (120, 200, 255)),   # 微量
+    (1,   4,    ( 60, 150, 255)),   # 小雨
+    (4,   10,   ( 40, 220, 140)),   # 中雨
+    (10,  20,   (255, 214,   0)),   # 大雨
+    (20,  40,   (255, 140,   0)),   # 豪雨
+    (40,  1e9,  (225,   0,   0)),   # 劇烈
+]
+
+# 先把上一輪的 qpf.json / qpf.png 帶過來，這輪抓失敗時至少留著舊的
+# （App 與網頁都會依 fetched 時間拒收太舊的）
+for _f in ("qpf.json", "qpf.png"):
+    if os.path.exists(f"{PREV}/{_f}") and not os.path.exists(f"{OUT}/{_f}"):
+        shutil.copy(f"{PREV}/{_f}", f"{OUT}/{_f}")
 
 try:
     qraw, _ = http_get(QPF_URL)
@@ -131,21 +147,54 @@ try:
     iy_idx, ix_idx = np.where(grid >= QPF_MIN_MM)
     mm = grid[iy_idx, ix_idx]
     order = np.argsort(-mm)                       # 由大到小，方便 App 早退
+
+    # ── 3a. 網頁地圖圖層 qpf.png ──────────────────────────────
+    # F-B0046 是等經緯度網格；Leaflet 的 imageOverlay 是在 Web Mercator 下角對角拉伸，
+    # 緯度跨 7 度直接疊會讓中緯度偏約 5 km。所以先把網格「縱向」重取樣成
+    # Mercator-Y 均勻的列（經度在 Mercator 下是線性，橫向不動）。
+    lat0 = 19.975 + QPF_DLAT
+    lon0 = 117.975 + QPF_DLON
+    latN = lat0 + res * (ny - 1)
+    lonE = lon0 + res * (nx - 1)
+    south, north = lat0 - res / 2, latN + res / 2     # 半格 padding 給 imageOverlay 角對齊
+    west, east = lon0 - res / 2, lonE + res / 2
+
+    def merc_y(lat_deg):
+        return math.log(math.tan(math.pi / 4 + math.radians(lat_deg) / 2))
+
+    out_h = 2 * ny
+    ys = np.linspace(merc_y(north), merc_y(south), out_h)          # row 0 = 北
+    row_lats = np.degrees(2 * np.arctan(np.exp(ys)) - math.pi / 2)
+    src_rows = np.clip(np.round((row_lats - lat0) / res).astype(int), 0, ny - 1)
+    merc = np.repeat(grid[src_rows], 2, axis=1)                    # 縱向重取樣 + 橫向 2x
+
+    rgba = np.zeros((out_h, 2 * nx, 4), np.uint8)
+    for lo, hi, (r, g, b) in QPF_SCALE:
+        m = (merc >= lo) & (merc < hi)
+        rgba[m] = (r, g, b, 255)
+    Image.fromarray(rgba, "RGBA").save(f"{OUT}/qpf.png", optimize=True)
+
     json.dump({
         "product": "F-B0046-001",
         "desc": di.get("datasetDescription", "未來1小時雷達定量降雨預報"),
         "issued": issued,
         "fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "datum": "TWD67",
-        "originLon": 117.975, "originLat": 19.975,   # 左下角第一點（官方 contentDescription）
+        "originLon": 117.975, "originLat": 19.975,   # 左下角第一點（官方 contentDescription；App 依這個再自行套 TWD67 偏移）
         "res": res, "nx": nx, "ny": ny,
         "order": "lonMajorSouthFirst",               # 先西→東，再南→北
         "unit": "mmPerHour",
+        # 給網頁：qpf.png 的 Leaflet bounds（WGS84，已含 TWD67 偏移＋半格 padding）
+        "png": "qpf.png",
+        "bounds": [[round(south, 5), round(west, 5)], [round(north, 5), round(east, 5)]],
+        # 給網頁點位查詢：grid 點 [0,0] 的 WGS84 座標（不經 Mercator，純選格）
+        "wgs84Lat0": round(lat0, 5), "wgs84Lon0": round(lon0, 5),
         "ix": ix_idx[order].tolist(),
         "iy": iy_idx[order].tolist(),
         "mm": [round(float(x), 1) for x in mm[order]],
     }, open(f"{OUT}/qpf.json", "w"))
-    print(f"qpf: {len(mm)} raining cells, issued {issued}, max {mm.max() if mm.size else 0:.1f}mm")
+    print(f"qpf: {len(mm)} raining cells, issued {issued}, "
+          f"max {mm.max() if mm.size else 0:.1f}mm, png {out_h}x{2 * nx}")
 except Exception as e:                               # QPF 失敗不影響雷達/預報
     print(f"qpf: FAILED {type(e).__name__}: {e}")
     if not os.path.exists(f"{OUT}/qpf.json"):

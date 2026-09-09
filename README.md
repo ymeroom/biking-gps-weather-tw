@@ -60,6 +60,11 @@ Rainbow 掛掉自動退回 v1b 的 CWA 觀測。
   - 網站讀 `https://raw.githubusercontent.com/ymeroom/biking-gps-weather-tw/data/radar/index.json`
     ＋ `.../data/forecast.json`（raw.githubusercontent 有 CORS）。
   - CWA data 分支不可用時自動退回 RainViewer。
+- **CWA 未來 1 小時降雨預報（可切換圖層）**：CWA `F-B0046-001`「未來 1 小時雷達定量降雨預報」
+  （S3 直連免金鑰）。`scripts/fetch_cwa.py` 把網格縮成 `qpf.json`（有雨格）＋渲染成 `qpf.png`
+  （**先做 Web Mercator 縱向重取樣**再上色，否則緯度跨 7 度疊圖中緯度會偏 5 km），推到 `data` 分支。
+  「🌧️ 雷達源」按鈕循環：自動(Rainbow) → CWA 未來1h → CWA 觀測。降雨面板另加一行 F-B0046 點位預報當補充參考。
+  單張圖、不能播放；`QPF_SCALE` 色階在 `index.html` 與 `scripts/fetch_cwa.py` **兩邊要同步**。
 - **預報**：`F-D0047-089` 縣市 3 小時降雨機率＋天氣現象（需 `CWA_KEY`，存在 repo 的 Actions secret）。
 - 深色底圖：純 CSS filter 反轉 OSM 圖磚，零外部相依。
 
