@@ -14,3 +14,7 @@ cwa_fc_test.json
 .dev.vars
 .wrangler/
 node_modules/
+
+# python
+__pycache__/
+*.pyc
