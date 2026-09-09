@@ -5,10 +5,13 @@ compatibility_date = "2026-01-01"
 # 金鑰不放這裡。用：
 #   wrangler secret put RAINBOW_KEY      （Rainbow API 金鑰）
 #   wrangler secret put GH_DISPATCH_TOKEN （GitHub fine-grained PAT，Actions: read+write，只給這個 repo）
-# 本機測試放 worker/.dev.vars（已 gitignore）：  RAINBOW_KEY=xxxx / GH_DISPATCH_TOKEN=xxxx
+#   wrangler secret put CRON_KEY          （自訂隨機字串；外部監控服務打 /cron?key=… 用）
+# 本機測試放 worker/.dev.vars（已 gitignore）
 
-# 每 12 分鐘戳 GitHub Actions 跑 fetch-cwa.yml。
-# GitHub 對 */15 排程狂降速（實測每 3–5 小時才跑一次），不能靠它做即時工具。
+# 定時觸發 fetch-cwa.yml 抓資料。三層：
+#   1. 外部監控服務（UptimeRobot / cron-job.org）每 5–10 分打 GET /cron?key=CRON_KEY  ← 主力
+#   2. 下面的 Cloudflare cron                                                        ← 備援（免費方案 best-effort，實測不觸發）
+#   3. fetch-cwa.yml 自己每 3 小時                                                   ← 最後防線
 [triggers]
 crons = ["*/12 * * * *"]
 

@@ -56,35 +56,47 @@ wrangler dev                              # http://localhost:8787
 
 `wrangler secret put RAINBOW_KEY` 再貼一次新值即可，不用重新 deploy。
 
-## Cron：定時觸發抓資料
+## 定時觸發抓資料
 
-`src/index.js` 的 `scheduled()` + `wrangler.toml` 的 `[triggers] crons = ["*/12 * * * *"]`。
-每 12 分鐘對 GitHub API 發 `workflow_dispatch`，讓 `fetch-cwa.yml` 跑（更新雷達／qpf／縣市預報）。
+讓 `fetch-cwa.yml` 每 5–10 分鐘跑一次（更新雷達／qpf／縣市預報）。三層，由可靠到不可靠：
 
-### 需要的 secret：`GH_DISPATCH_TOKEN`
+1. **外部監控服務打 `GET /cron?key=CRON_KEY`** ← 主力。UptimeRobot / cron-job.org 這種服務定時 ping URL 是本業，最可靠。
+2. Cloudflare cron（`wrangler.toml` `[triggers]`）← 備援。**免費方案 best-effort，2026-09-09 實測完全不觸發，別依賴。**
+3. `fetch-cwa.yml` 自己每 3 小時 ← 最後防線。
 
-GitHub fine-grained personal access token：
+Worker 收到 `/cron?key=…`（key 對）就對 GitHub API 發 `workflow_dispatch`。
+key 洩漏頂多讓人多跑幾次無害的抓資料。
+
+### 需要的 secret
+
+**`GH_DISPATCH_TOKEN`** — GitHub fine-grained PAT：
 1. github.com → Settings → Developer settings → **Fine-grained tokens** → Generate new token
 2. Repository access：**Only select repositories** → `ymeroom/biking-gps-weather-tw`
 3. Permissions → Repository permissions → **Actions: Read and write**
-4. 產生後複製，然後：
+
+**`CRON_KEY`** — 自己想一個隨機字串（例：`openssl rand -hex 16` 的輸出）。
 
 ```bash
 cd worker
-wrangler secret put GH_DISPATCH_TOKEN   # 貼上 token
-wrangler deploy                          # cron 設定變更要 redeploy
+wrangler secret put GH_DISPATCH_TOKEN   # 貼 PAT
+wrangler secret put CRON_KEY            # 貼隨機字串
+wrangler deploy
 ```
+
+### 設定外部監控服務（擇一）
+
+- **UptimeRobot**（free，5 分鐘間隔，最穩）：New monitor → HTTP(s) → URL
+  `https://rainbow-proxy.ymeroom.workers.dev/cron?key=你的CRON_KEY` → interval 5 min
+- **cron-job.org**（free，間隔可自訂）：Create cronjob → 同一個 URL → every 10 min
 
 ### 驗證
 
 ```bash
-# 立刻手動觸發一次 scheduled handler（不用等 12 分鐘）
-wrangler dev --test-scheduled
-curl "http://localhost:8787/__scheduled?cron=*/12+*+*+*+*"
-# → GitHub Actions 頁應出現一筆新的 workflow_dispatch 執行
+# 直接打一次（會真的觸發 workflow）
+curl "https://rainbow-proxy.ymeroom.workers.dev/cron?key=你的CRON_KEY"
+# 期望回 "cron: dispatch HTTP 204"；GitHub Actions 頁出現新的 workflow_dispatch
 
-# 看正式環境的 cron log
-wrangler tail
+wrangler tail   # 看正式環境 log
 ```
 
-token 過期換新：`wrangler secret put GH_DISPATCH_TOKEN` 再貼一次即可。
+token / key 換新：`wrangler secret put <名稱>` 再貼一次即可。

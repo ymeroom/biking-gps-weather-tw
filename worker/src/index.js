@@ -52,41 +52,52 @@ const isNum = (s) => /^-?\d+(\.\d+)?$/.test(s);
 const GH_WORKFLOW_DISPATCH =
   "https://api.github.com/repos/ymeroom/biking-gps-weather-tw/actions/workflows/fetch-cwa.yml/dispatches";
 
+// 戳 GitHub Actions 跑抓資料 workflow。為什麼要這層：GitHub 自己的 */15 排程狂降速
+// （實測每 3–5 小時才跑一次），Cloudflare 免費 cron 也 best-effort、實測完全不觸發。
+// 所以靠外部監控服務（UptimeRobot / cron-job.org）每 5–10 分鐘打 GET /cron?key=CRON_KEY。
+async function dispatchFetchCwa(env, source) {
+  if (!env.GH_DISPATCH_TOKEN) return { ok: false, msg: "GH_DISPATCH_TOKEN 未設" };
+  try {
+    const r = await fetch(GH_WORKFLOW_DISPATCH, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "rainbow-proxy-cron",
+      },
+      body: JSON.stringify({ ref: "main" }),
+    });
+    const msg = `${source}: dispatch HTTP ${r.status}` +
+      (r.ok ? "" : " " + (await r.text()).slice(0, 300));
+    console[r.ok ? "log" : "error"](msg);
+    return { ok: r.ok, msg };
+  } catch (e) {
+    const msg = `${source}: ${e && e.message}`;
+    console.error(msg);
+    return { ok: false, msg };
+  }
+}
+
 export default {
-  // Cron（wrangler.toml [triggers]）：每 12 分鐘戳 GitHub Actions 跑抓資料 workflow。
-  // 為什麼要這層：GitHub 對 */15 排程狂降速，實測每 3–5 小時才跑一次，撐不起即時工具。
+  // Cloudflare cron（wrangler.toml [triggers]）—— 留著當備援，但實測不可靠，主力是 /cron 路由。
   async scheduled(event, env, ctx) {
-    if (!env.GH_DISPATCH_TOKEN) {
-      console.error("scheduled: GH_DISPATCH_TOKEN secret 未設");
-      return;
-    }
-    try {
-      const r = await fetch(GH_WORKFLOW_DISPATCH, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "rainbow-proxy-cron",
-        },
-        body: JSON.stringify({ ref: "main" }),
-      });
-      if (r.ok) {
-        console.log("scheduled: fetch-cwa dispatched (HTTP " + r.status + ")");
-      } else {
-        console.error(
-          "scheduled: dispatch failed HTTP " + r.status + " " + (await r.text()).slice(0, 300),
-        );
-      }
-    } catch (e) {
-      console.error("scheduled: " + (e && e.message));
-    }
+    ctx.waitUntil(dispatchFetchCwa(env, "scheduled"));
   },
 
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const origin = req.headers.get("Origin");
     const p = url.pathname;
+
+    // 外部監控服務打這個來定時觸發抓資料。key 對就放行（洩漏頂多讓人多跑幾次無害的抓資料）。
+    if (p === "/cron") {
+      if (!env.CRON_KEY || url.searchParams.get("key") !== env.CRON_KEY) {
+        return new Response("forbidden", { status: 403 });
+      }
+      const { ok, msg } = await dispatchFetchCwa(env, "cron");
+      return new Response(msg, { status: ok ? 200 : 502 });
+    }
 
     if (req.method === "OPTIONS") return reply(null, 204, origin);
     if (req.method !== "GET") return reply("method not allowed", 405, origin);
