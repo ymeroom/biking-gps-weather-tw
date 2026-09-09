@@ -1,6 +1,8 @@
 # rainbow-proxy — Cloudflare Worker
 
 隱藏 Rainbow Weather API 金鑰、補 CORS、擋非本站來源。前端 `index.html` 只打這支 Worker。
+另外用 **Cron Trigger 每 12 分鐘戳 GitHub Actions** 跑 `fetch-cwa.yml`（GitHub 自己的 `*/15`
+排程被狂降速，實測每 3–5 小時才跑一次）。
 
 ## 路由
 
@@ -53,3 +55,36 @@ wrangler dev                              # http://localhost:8787
 ## 換金鑰
 
 `wrangler secret put RAINBOW_KEY` 再貼一次新值即可，不用重新 deploy。
+
+## Cron：定時觸發抓資料
+
+`src/index.js` 的 `scheduled()` + `wrangler.toml` 的 `[triggers] crons = ["*/12 * * * *"]`。
+每 12 分鐘對 GitHub API 發 `workflow_dispatch`，讓 `fetch-cwa.yml` 跑（更新雷達／qpf／縣市預報）。
+
+### 需要的 secret：`GH_DISPATCH_TOKEN`
+
+GitHub fine-grained personal access token：
+1. github.com → Settings → Developer settings → **Fine-grained tokens** → Generate new token
+2. Repository access：**Only select repositories** → `ymeroom/biking-gps-weather-tw`
+3. Permissions → Repository permissions → **Actions: Read and write**
+4. 產生後複製，然後：
+
+```bash
+cd worker
+wrangler secret put GH_DISPATCH_TOKEN   # 貼上 token
+wrangler deploy                          # cron 設定變更要 redeploy
+```
+
+### 驗證
+
+```bash
+# 立刻手動觸發一次 scheduled handler（不用等 12 分鐘）
+wrangler dev --test-scheduled
+curl "http://localhost:8787/__scheduled?cron=*/12+*+*+*+*"
+# → GitHub Actions 頁應出現一筆新的 workflow_dispatch 執行
+
+# 看正式環境的 cron log
+wrangler tail
+```
+
+token 過期換新：`wrangler secret put GH_DISPATCH_TOKEN` 再貼一次即可。

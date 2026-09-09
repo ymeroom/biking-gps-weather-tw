@@ -49,7 +49,40 @@ function reply(body, status, origin, extra) {
 
 const isNum = (s) => /^-?\d+(\.\d+)?$/.test(s);
 
+const GH_WORKFLOW_DISPATCH =
+  "https://api.github.com/repos/ymeroom/biking-gps-weather-tw/actions/workflows/fetch-cwa.yml/dispatches";
+
 export default {
+  // Cron（wrangler.toml [triggers]）：每 12 分鐘戳 GitHub Actions 跑抓資料 workflow。
+  // 為什麼要這層：GitHub 對 */15 排程狂降速，實測每 3–5 小時才跑一次，撐不起即時工具。
+  async scheduled(event, env, ctx) {
+    if (!env.GH_DISPATCH_TOKEN) {
+      console.error("scheduled: GH_DISPATCH_TOKEN secret 未設");
+      return;
+    }
+    try {
+      const r = await fetch(GH_WORKFLOW_DISPATCH, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "rainbow-proxy-cron",
+        },
+        body: JSON.stringify({ ref: "main" }),
+      });
+      if (r.ok) {
+        console.log("scheduled: fetch-cwa dispatched (HTTP " + r.status + ")");
+      } else {
+        console.error(
+          "scheduled: dispatch failed HTTP " + r.status + " " + (await r.text()).slice(0, 300),
+        );
+      }
+    } catch (e) {
+      console.error("scheduled: " + (e && e.message));
+    }
+  },
+
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const origin = req.headers.get("Origin");
