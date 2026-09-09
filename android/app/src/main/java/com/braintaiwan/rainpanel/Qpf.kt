@@ -1,6 +1,7 @@
 package com.braintaiwan.rainpanel
 
 import org.json.JSONObject
+import java.time.OffsetDateTime
 import kotlin.math.roundToInt
 
 /**
@@ -11,7 +12,10 @@ import kotlin.math.roundToInt
  */
 class QpfGrid private constructor(
     val issued: String?,
-    val fetchedEpochMs: Long,
+    /** 這份 qpf.json 是「本機何時下載」的（給 QpfRepository 當重抓節流用，不代表預報新舊）。 */
+    val downloadedEpochMs: Long,
+    /** 預報本身的「發布時刻」（來自 qpf.json 的 issued 欄位），0 = 不明。新舊判斷看這個。 */
+    private val issuedEpochMs: Long,
     private val originLat: Double,
     private val originLon: Double,
     private val res: Double,
@@ -22,9 +26,12 @@ class QpfGrid private constructor(
 ) {
     val hasData: Boolean get() = error == null && issued != null
 
-    /** 資料是否夠新（fetched 在 maxAgeMs 內）。 */
-    fun isFresh(nowMs: Long, maxAgeMs: Long = 40 * 60_000L) =
-        hasData && nowMs - fetchedEpochMs <= maxAgeMs
+    /**
+     * 預報是否夠新——看「發布時刻」離現在多久，不是看本機何時下載。
+     * 後端每 ~12 分更新一次；發布時刻通常落後現在 15–25 分。預設 55 分內算堪用。
+     */
+    fun isFresh(nowMs: Long, maxAgeMs: Long = 55 * 60_000L) =
+        hasData && issuedEpochMs > 0 && nowMs - issuedEpochMs <= maxAgeMs
 
     /** 指定 WGS84 座標未來 1 小時預報雨量（mm）。不在範圍/沒雨回 0。 */
     fun mmAt(lat: Double, lon: Double): Double {
@@ -37,10 +44,13 @@ class QpfGrid private constructor(
     }
 
     companion object {
-        fun parse(json: String, fetchedEpochMs: Long): QpfGrid {
+        fun parse(json: String, downloadedEpochMs: Long): QpfGrid {
             val o = JSONObject(json)
             val err = o.optString("error", "").ifEmpty { null }
             val issued = if (o.has("issued") && !o.isNull("issued")) o.getString("issued") else null
+            val issuedEpochMs = issued?.let {
+                runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrDefault(0L)
+            } ?: 0L
             val nx = o.optInt("nx", 441)
             val ny = o.optInt("ny", 561)
             val cells = HashMap<Int, Double>()
@@ -55,7 +65,8 @@ class QpfGrid private constructor(
             }
             return QpfGrid(
                 issued = issued,
-                fetchedEpochMs = fetchedEpochMs,
+                downloadedEpochMs = downloadedEpochMs,
+                issuedEpochMs = issuedEpochMs,
                 originLat = o.optDouble("originLat", 19.975),
                 originLon = o.optDouble("originLon", 117.975),
                 res = o.optDouble("res", 0.0125),

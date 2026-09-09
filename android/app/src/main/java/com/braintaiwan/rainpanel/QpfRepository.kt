@@ -24,7 +24,7 @@ object QpfRepository {
     suspend fun get(ctx: Context): QpfGrid? = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val c = cached
-        if (c != null && now - c.fetchedEpochMs < REFRESH_MS) return@withContext c
+        if (c != null && now - c.downloadedEpochMs < REFRESH_MS) return@withContext c
 
         val fetched = runCatching { download() }.getOrNull()
         if (fetched != null) {
