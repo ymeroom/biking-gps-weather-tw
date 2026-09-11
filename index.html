@@ -92,6 +92,7 @@
   <span class="chip" id="chip-gps">定位：<b>等待中…</b></span>
   <span class="chip" id="chip-cwa">雷達：<b>載入中…</b></span>
   <span class="chip" id="chip-spd" hidden>速度：<b>—</b></span>
+  <span class="chip" id="chip-route" hidden>路線：<b>—</b></span>
 </div>
 
 <div id="toast" hidden></div>
@@ -101,6 +102,7 @@
   <div id="legend-warn" hidden style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgba(224,122,0,.14);color:var(--warn);font-size:11.5px;line-height:1.4">
     ⚠️ Rainbow 強度常偏低，以雷達實況／體感為準
   </div>
+  <div id="legend-route" hidden style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--border)"></div>
   <div id="legend-rows"></div>
   <div id="legend-src" style="margin-top:6px;color:var(--panel-sub)"></div>
 </div>
@@ -124,6 +126,7 @@
     <button id="btn-wake">💡 螢幕常亮</button>
     <button id="btn-dark">🌙 深色底圖</button>
     <button id="btn-src">🌧️ 雷達源</button>
+    <button id="btn-route">🚴 路線</button>
     <button id="btn-legend">🎨 圖例</button>
   </div>
 </div>
@@ -162,6 +165,17 @@ const QPF_SCALE = [
   ['rgb(255,214,0)',   '10–20', '大雨'],
   ['rgb(255,140,0)',   '20–40', '豪雨'],
   ['rgb(225,0,0)',     '≥40',   '劇烈'],
+];
+
+/* QPF_SCALE 的數字下限/上限（mm），跟上面色階一一對應，路線上色用。 */
+const QPF_BINS = [[0.1,1],[1,4],[4,10],[10,20],[20,40],[40,Infinity]];
+const QPF_NO_RAIN_COLOR = '#2e9e4f';   // 路線上這一小段：未來1小時預報大致無雨
+const QPF_NO_DATA_COLOR = '#9aa5b1';   // 路線上這一小段：預報資料過期／沒涵蓋，顏色僅供參考
+
+/* 固定路線（GPX 錄製後端精簡出的座標檔，跟著網站一起發佈，不會自動更新）。 */
+const ROUTES = [
+  { key: 'challenge', file: 'routes/loop-challenge.json' },
+  { key: 'easy',       file: 'routes/loop-easy.json' },
 ];
 
 /* 中央氣象署 雷達回波 dBZ 標準色階（取自 colorbar_n.png）：[R,G,B, dBZ, 白話] */
@@ -210,6 +224,10 @@ function setDarkBase(on){
 let radarLayer = null;
 let meMarker = null, meAccCircle = null;
 let ghostMarkers = [];
+
+/* 固定路線圖層畫在自己的 pane，zIndex 比雷達圖層（400）高，才不會被蓋住。 */
+map.createPane('routePane');
+map.getPane('routePane').style.zIndex = 450;
 
 map.on('dragstart', () => setFollow(false));
 
@@ -340,6 +358,7 @@ async function loadQpf(){
     qpfCells = new Map();
     for(let k = 0; k < d.mm.length; k++) qpfCells.set(d.iy[k] * d.nx + d.ix[k], d.mm[k]);
     renderForecast();
+    if(routeKey) renderRoute();                 // 路線顏色跟著新的一小時預報重算
     if(radarMode === 'qpf') loadRadarIndex();   // 圖層在用 qpf → 換新影格
   }catch(_){ /* 抓不到就維持舊的；qpfFresh() 會擋過期 */ }
 }
@@ -365,6 +384,113 @@ async function useQpfLayer(){
   };
   adoptFrames([frame], '雷達：<b>CWA 未來1h</b> 預報', 0);
   return true;
+}
+
+/* ── 固定路線（環騎台北）：畫在地圖上，依 F-B0046 未來1小時預報幫每一小段上色 ──
+   路線本身不會變（GPX 轉出來的靜態檔），只有顏色會跟著 qpf 資料每 10 分鐘重算。
+   注意：整條路線都套用「現在」這一張未來1小時預報圖，不是你實際騎到那一段的天氣
+   （免費雷達預報只準未來1小時，騎完全程要2–3小時的話，遠處路段只能當參考）。 */
+let routeKey = (() => { try{ return localStorage.getItem('routeKey') || null; }catch(_){ return null; } })();
+const routeCache = {};      // key -> {name, distanceKm, points}
+let routeLayerGroup = null;
+
+function haversineM(a, b){
+  const R = 6371000, toRad = d => d * Math.PI/180;
+  const dLat = toRad(b[0]-a[0]), dLon = toRad(b[1]-a[1]);
+  const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function qpfColorForMm(mm){
+  if(mm == null || !qpfFresh()) return QPF_NO_DATA_COLOR;
+  if(mm < QPF_BINS[0][0]) return QPF_NO_RAIN_COLOR;
+  for(let i = 0; i < QPF_BINS.length; i++){
+    if(mm >= QPF_BINS[i][0] && mm < QPF_BINS[i][1]) return QPF_SCALE[i][0];
+  }
+  return QPF_SCALE[QPF_SCALE.length - 1][0];
+}
+async function loadRoute(key){
+  if(routeCache[key]) return routeCache[key];
+  const meta = ROUTES.find(r => r.key === key);
+  if(!meta) return null;
+  const d = await fetch(meta.file, {cache:'force-cache'}).then(r => {
+    if(!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+  });
+  routeCache[key] = d;
+  return d;
+}
+function clearRouteLayer(){
+  if(routeLayerGroup){ map.removeLayer(routeLayerGroup); routeLayerGroup = null; }
+}
+// 每隔約 500m 重新取樣一次顏色，相鄰同色的路段合併成一條線，避免畫出上千條小線段。
+function renderRoute(){
+  clearRouteLayer();
+  const el = document.getElementById('chip-route');
+  if(!routeKey){ el.hidden = true; return; }
+  const data = routeCache[routeKey];
+  if(!data || !data.points || data.points.length < 2){ el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = '路線：<b>' + data.name + ' · ' + data.distanceKm + ' km</b>';
+
+  const STEP_M = 500;
+  const pts = data.points;
+  const group = L.layerGroup();
+  let segPts = [pts[0]];
+  let color = qpfColorForMm(qpfMmAt(pts[0][0], pts[0][1]));
+  let cumSinceSample = 0;
+  const flush = (nextStartPt) => {
+    if(segPts.length >= 2){
+      L.polyline(segPts, {pane:'routePane', color:'#fff', weight:8, opacity:.55, lineCap:'round'}).addTo(group);
+      L.polyline(segPts, {pane:'routePane', color, weight:4.5, opacity:.9, lineCap:'round'}).addTo(group);
+    }
+    segPts = nextStartPt ? [nextStartPt] : [];
+  };
+  for(let i = 1; i < pts.length; i++){
+    cumSinceSample += haversineM(pts[i-1], pts[i]);
+    segPts.push(pts[i]);
+    if(cumSinceSample >= STEP_M){
+      cumSinceSample = 0;
+      const newColor = qpfColorForMm(qpfMmAt(pts[i][0], pts[i][1]));
+      if(newColor !== color){
+        flush(pts[i]);
+        color = newColor;
+      }
+    }
+  }
+  flush(null);
+  group.addTo(map);
+  routeLayerGroup = group;
+}
+function cycleRoutePref(){
+  const order = [null, ...ROUTES.map(r => r.key)];
+  const next = order[(order.indexOf(routeKey) + 1) % order.length];
+  setRoutePref(next);
+}
+async function setRoutePref(key){
+  routeKey = key;
+  try{ key ? localStorage.setItem('routeKey', key) : localStorage.removeItem('routeKey'); }catch(_){}
+  reflectRouteBtn();
+  if(!key){ clearRouteLayer(); document.getElementById('chip-route').hidden = true; renderLegend(); return; }
+  try{
+    const data = await loadRoute(key);
+    renderRoute();
+    renderLegend();
+    if(data && data.points && data.points.length){
+      map.fitBounds(L.latLngBounds(data.points), {padding:[24,24]});
+    }
+    toast('🚴 顯示「' + data.name + '」，顏色＝假設現在出發的未來1小時預報，不是精準預測你騎到那裡的天氣', 4500);
+  }catch(e){
+    toast('⚠️ 路線資料載入失敗：' + e.message, 4000);
+    routeKey = null;
+    try{ localStorage.removeItem('routeKey'); }catch(_){}
+    reflectRouteBtn();
+  }
+}
+function reflectRouteBtn(){
+  const b = document.getElementById('btn-route');
+  if(!b) return;
+  const meta = ROUTES.find(r => r.key === routeKey);
+  b.textContent = meta ? ('🚴 ' + (routeKey === 'challenge' ? '挑戰騎' : '輕鬆騎')) : '🚴 路線';
+  b.classList.toggle('on', !!routeKey);
 }
 
 async function loadRadarIndex(){
@@ -718,6 +844,16 @@ function setRadarPref(pref){
   loadRadarIndex();
 }
 function renderLegend(){
+  const rlEl = document.getElementById('legend-route');
+  if(routeKey){
+    rlEl.hidden = false;
+    rlEl.innerHTML = '<h4 style="margin:0 0 6px">路線顏色（未來1小時預報）</h4>' +
+      '<div class="row"><span class="sw" style="background:' + QPF_NO_RAIN_COLOR + '"></span>大致無雨</div>' +
+      QPF_SCALE.map(r => `<div class="row"><span class="sw" style="background:${r[0]}"></span>${r[1]} mm · ${r[2]}</div>`).join('') +
+      '<div class="row"><span class="sw" style="background:' + QPF_NO_DATA_COLOR + '"></span>資料過期／僅供參考</div>';
+  } else {
+    rlEl.hidden = true;
+  }
   const t = document.getElementById('legend-title');
   const rows = document.getElementById('legend-rows');
   if(radarMode === 'qpf'){
@@ -753,6 +889,7 @@ document.getElementById('btn-now').onclick = () => {
 document.getElementById('btn-wake').onclick = toggleWake;
 document.getElementById('btn-dark').onclick = () => setDarkBase(!darkBase);
 document.getElementById('btn-src').onclick = cycleRadarPref;
+document.getElementById('btn-route').onclick = cycleRoutePref;
 document.getElementById('btn-legend').onclick = () => {
   const l = document.getElementById('legend'); l.hidden = !l.hidden;
   document.getElementById('btn-legend').classList.toggle('on', !l.hidden);
@@ -762,10 +899,16 @@ document.getElementById('btn-legend').onclick = () => {
 setDarkBase(darkBase);
 reflectWakeBtn();
 reflectSrcBtn();
+reflectRouteBtn();
 startGeo();
 loadQpf();
 loadRadarIndex();
 loadForecast();
+if(routeKey){
+  loadRoute(routeKey).then(() => { renderRoute(); renderLegend(); }).catch(() => {
+    routeKey = null; try{ localStorage.removeItem('routeKey'); }catch(_){} reflectRouteBtn();
+  });
+}
 requestWake();
 setInterval(loadRadarIndex, RADAR_REFRESH_MS);
 setInterval(loadForecast, FORECAST_REFRESH_MS);
