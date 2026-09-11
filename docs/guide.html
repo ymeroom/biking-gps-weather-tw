@@ -196,7 +196,7 @@
 
   <div class="statusbar" aria-hidden="true">
     <span class="chip">定位：<b>±12 m</b></span>
-    <span class="chip">雷達：<b>Rainbow 預報</b></span>
+    <span class="chip">雷達：<b>08:30 CWA觀測</b></span>
     <span class="chip">速度：<b>21.4 km/h</b></span>
   </div>
   <p class="sub" style="font-size:13px;margin-top:6px">▲ 這是 App 頂端的三個狀態標籤，開起來就會看到。</p>
@@ -204,11 +204,11 @@
 
 <section>
   <h2><span class="n">01</span>這是什麼、不是什麼</h2>
-  <p>日本版（<code>biking-gps-weather</code>）用氣象廳免費的「未來 2 小時雷達預報圖磚」。<strong>台灣沒有免費公開的等價資料</strong>——中央氣象署只有觀測回波、沒有未來。</p>
-  <p>所以台灣版改用 <strong>Rainbow Weather</strong>（衛星＋雷達的 AI 預測，有付費 API 但免費額度個人用足夠）：時間軸能往<strong>未來播 2 小時</strong>，看雨帶預測往哪移動；降雨面板直接告訴你<strong>「你的位置大約幾分鐘後開始下雨」</strong>。Rainbow 掛掉時自動退回氣象署觀測回波（就只剩過去、沒有未來）。</p>
+  <p>日本版（<code>biking-gps-weather</code>）用氣象廳免費的「未來 2 小時雷達預報圖磚」。台灣版一開始繞了路，接過付費的 AI 預測 API，後來發現中央氣象署自己就有免費的<strong>「未來 1 小時雷達定量降雨預報」（F-B0046）</strong>，準確度更好也不用擔心額度，就全面改用它。</p>
+  <p>畫面預設是<strong>過去約 2–3 小時的觀測回波動畫</strong>（可播放）；按「🌧️ 雷達源」切到<strong>未來 1 小時</strong>會變成一張單張的預報圖（不能播放）。降雨面板頭條直接告訴你<strong>「你這個位置未來 1 小時大概會下多少雨」</strong>。</p>
   <div class="note warn">
     <div class="h">要有心理準備</div>
-    <p>未來那段是 <strong>AI nowcast</strong>：前 30–60 分鐘可信，往後越久越「糊」，超過 90 分鐘只能當趨勢參考（App 會標「僅供參考」）。它不是氣象署官方等級，但台灣衛星覆蓋很好，實務上夠用。</p>
+    <p>免費資料只保證<strong>未來 1 小時</strong>準。超過 1 小時只剩縣市級、每 3 小時一格的粗略降雨機率，不分路段、更新也比較慢。規劃長途路線時，遠處路段只能當參考，不是精準預言。</p>
   </div>
 </section>
 
@@ -236,15 +236,15 @@
     </div>
     <div>
       <dt>時間軸＋▶</dt>
-      <dd>現在往前約 20 分鐘 ＋ <strong>未來 2 小時</strong>，每 10 分鐘一格。按 ▶ 播放看雨帶預測怎麼移動。時間標籤會寫「觀測」或「+40 分 · 預報」；超過 90 分鐘標「僅供參考」。（退回氣象署觀測時改成過去 2–3 小時、沒有未來。）</dd>
+      <dd>預設是<strong>過去約 2–3 小時</strong>的觀測回波動畫，每 ~12 分鐘一格，按 ▶ 播放看雨帶怎麼移動。切到「未來 1 小時」時變成單張預報圖，時間軸停用（沒有過去、也不能播放，只有那一張）。</dd>
     </div>
     <div>
       <dt>降雨面板</dt>
-      <dd>畫面最上方那條。頭條是 Rainbow 對<strong>你目前這個 GPS 點</strong>的預測：「此處約 25 分鐘後開始下中雨」或「此處未來 2 小時無雨」——<strong>只算你腳下那一點，不是你前面的路</strong>。前方會不會遇到雨，播時間軸的未來影格＋看橘點。第二行是氣象署縣市級 3 小時降雨機率（背景參考，跟雷達不同尺度別混用）。</dd>
+      <dd>畫面最上方那條。頭條是中央氣象署對<strong>你目前這個 GPS 點</strong>未來 1 小時的預測：「此處未來 1 小時累積約 3mm（小雨）」或「此處未來 1 小時大致無雨」——<strong>只算你腳下那一點，不是你前面的路</strong>。第二行是氣象署縣市級 3 小時降雨機率（背景參考，跟雷達不同尺度別混用）。</dd>
     </div>
     <div>
       <dt>雷達來源標籤</dt>
-      <dd>頂端標籤，寫目前用哪個源：<code>Rainbow 預報</code>（正常）／<code>08:30 CWA觀測</code>（Rainbow 掛了退回氣象署）／<code>RainViewer後備</code>（再退一層）。App 每 3 分鐘重讀。</dd>
+      <dd>頂端標籤，寫目前用哪個源：<code>08:30 CWA觀測</code>（預設）／<code>RainViewer後備</code>（氣象署資料抓不到時退這層）／<code>CWA 未來1h</code>（手動切換）。App 每 3 分鐘重讀。</dd>
     </div>
     <div>
       <dt>📍 跟隨</dt>
@@ -271,31 +271,31 @@
 
 <section>
   <h2><span class="n">04</span>雷達怎麼看</h2>
-  <p class="sub">Rainbow 預報（正常情況）：藍→靛→紫的強度漸層，越深＝雨越大。</p>
+  <p class="sub">預設的觀測回波：dBZ 標準色階，藍=小雨 綠=中雨 黃=大雨 紅=豪雨 紫=劇烈。</p>
   <div class="legend">
-    <div class="row"><span class="bar" style="background:rgb(160,217,255)"></span><span class="dbz">淡藍</span><span class="lab">毛毛雨 / 小雨</span></div>
-    <div class="row"><span class="bar" style="background:rgb(90,160,255)"></span><span class="dbz">藍</span><span class="lab">小雨 → 中雨</span></div>
-    <div class="row"><span class="bar" style="background:rgb(43,112,254)"></span><span class="dbz">深藍</span><span class="lab">中雨</span></div>
-    <div class="row"><span class="bar" style="background:rgb(27,73,218)"></span><span class="dbz">靛</span><span class="lab">大雨</span></div>
-    <div class="row"><span class="bar" style="background:rgb(83,68,225)"></span><span class="dbz">藍紫</span><span class="lab">大雨 → 豪雨</span></div>
-    <div class="row"><span class="bar" style="background:rgb(150,74,243)"></span><span class="dbz">紫</span><span class="lab">劇烈</span></div>
+    <div class="row"><span class="bar" style="background:rgb(0,200,255)"></span><span class="dbz">≤15</span><span class="lab">毛毛雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(0,91,255)"></span><span class="dbz">15–25</span><span class="lab">小雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(0,200,0)"></span><span class="dbz">25–35</span><span class="lab">中雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(255,255,0)"></span><span class="dbz">35–40</span><span class="lab">大雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(255,0,0)"></span><span class="dbz">45–55</span><span class="lab">豪雨</span></div>
+    <div class="row"><span class="bar" style="background:rgb(255,0,255)"></span><span class="dbz">≥60</span><span class="lab">劇烈</span></div>
   </div>
-  <p class="sub" style="margin-top:14px">退回氣象署觀測時：dBZ 標準色階（藍=小雨 綠=中雨 黃=大雨 紅=豪雨 紫=劇烈）。App 的「🎨 圖例」會跟著目前的源自動切換。</p>
+  <p class="sub" style="margin-top:14px">切到「未來 1 小時」時：改成 mm 雨量色階（藍→綠→黃→橘→紅，越深＝預報雨量越大）。App 的「🎨 圖例」會跟著目前的源自動切換。</p>
   <div class="note">
     <div class="h">判讀重點</div>
-    <p><strong>播完整段看移動。</strong>按 ▶ 播過去→未來，注意雨帶整體往哪個方位飄、大概多快。台灣夏天午後雷雨常從山區往平地、或隨西南風由西南往東北移。</p>
-    <p><strong>對照橘色推算點。</strong>看你 <code>+30 分</code> 的推算位置，落在未來影格的雨帶裡嗎？那就是「我到那裡時大概會遇到雨」。</p>
-    <p><strong>深色 / 大雨不要硬騎。</strong>靛紫色預報回波往往伴隨強陣風、能見度驟降、甚至落雷。提早找地方躲。</p>
-    <p><strong>預報會變。</strong>AI nowcast 每 10 分鐘更新一次，雨帶可能發展也可能散掉。90 分鐘後的影格只能當趨勢。</p>
+    <p><strong>播完整段看移動。</strong>按 ▶ 播過去的觀測動畫，注意雨帶整體往哪個方位飄、大概多快。台灣夏天午後雷雨常從山區往平地、或隨西南風由西南往東北移。</p>
+    <p><strong>對照橘色推算點。</strong>看你 <code>+30 分</code> 的推算位置，落在目前雨帶延伸的方向上嗎？那就是「我到那裡時大概會遇到雨」的參考。</p>
+    <p><strong>深色 / 大雨不要硬騎。</strong>黃紅色回波往往伴隨強陣風、能見度驟降、甚至落雷。提早找地方躲。</p>
+    <p><strong>預報會變。</strong>未來 1 小時的預報圖每 10–15 分鐘更新一次，出發前後都值得重看一次。</p>
   </div>
 </section>
 
 <section>
   <h2><span class="n">05</span>實用建議</h2>
   <ul class="tips">
-    <li><b>出發前：</b>把時間軸從過去播到未來一次。面板頭條說「未來 2 小時無雨」、未來影格也沒有雨帶往你路線方向來 —— 通常可以放心出門。</li>
-    <li><b>騎乘中每 15–20 分鐘瞄一次：</b>停紅燈、補給、上廁所時看就好。重點是面板頭條有沒有變成「約 X 分鐘後開始下雨」。</li>
-    <li><b>面板說要下雨時：</b>播未來影格，看橘色 <code>+30 分</code> 推算點落在哪。推算點在未來的雨帶裡、雨帶還在往你這邊移 —— 大概躲不掉，提早找超商 / 騎樓 / 加油站。</li>
+    <li><b>出發前：</b>先播一次觀測回波看雨帶往哪飄，再切「未來 1 小時」看面板頭條。頭條說「大致無雨」、附近也沒有雨帶正往你路線方向移動 —— 通常可以放心出門。</li>
+    <li><b>騎乘中每 15–20 分鐘瞄一次：</b>停紅燈、補給、上廁所時看就好。重點是面板頭條的 mm 數字有沒有跳起來。</li>
+    <li><b>面板說會下雨時：</b>看橘色 <code>+30 分</code> 推算點落在哪、附近回波是不是正往你這邊移。看起來躲不掉的話，提早找超商 / 騎樓 / 加油站。</li>
     <li><b>雨帶跟你同向移動：</b>如果回波移動方向跟你前進方向差不多、速度也接近，你可能會「跟著雨走」很久。考慮放慢讓它先走、或加速切出去。</li>
     <li><b>山區 / 縱谷路線：</b>地形雨變化快，縣市級文字預報參考價值低，以雷達回波的實際發展為準。</li>
     <li><b>傍晚 / 夜騎：</b>先開 🌙 深色底圖。iPhone 記得把「自動鎖定」設長一點，Android 開 💡 螢幕常亮。</li>
@@ -310,19 +310,19 @@
     <thead><tr><th>項目</th><th>來源</th><th>更新頻率</th></tr></thead>
     <tbody>
       <tr>
-        <td>未來預報雷達<br>（主）</td>
-        <td>Rainbow Weather API<br><span class="mono">tiles/v1/precip</span><br>衛星＋雷達 AI nowcast，未來 4 小時（App 只用到 +2h）</td>
-        <td>每 10 分鐘<br>App 每 3 分鐘重讀</td>
+        <td>觀測雷達<br>（主）</td>
+        <td>中央氣象署 <span class="mono">O-A0058-003</span> 整合回波圖<br>範圍 <span class="mono">118–124°E, 20.5–26.5°N</span>；GitHub Actions 每 ~12 分抓存</td>
+        <td>約每 10–25 分鐘<br>App 每 3 分鐘重讀</td>
       </tr>
       <tr>
-        <td>你的位置降雨<br>（面板頭條）</td>
-        <td>Rainbow <span class="mono">nowcast/v1/precip</span><br>逐分鐘、你的實際 GPS 座標</td>
-        <td>移動 1.5 km 或每 20 分鐘重打一次</td>
+        <td>未來 1 小時預報<br>（你的位置＋地圖圖層）</td>
+        <td>中央氣象署 <span class="mono">F-B0046-001</span><br>未來 1 小時雷達定量降雨預報，約 1.4km 網格</td>
+        <td>每 10–15 分鐘<br>App 每 10 分鐘重讀</td>
       </tr>
       <tr>
         <td>觀測雷達<br>（後備）</td>
-        <td>中央氣象署 <span class="mono">O-A0058-003</span> 整合回波圖<br>範圍 <span class="mono">118–124°E, 20.5–26.5°N</span>；GitHub Actions 每 ~12 分抓存</td>
-        <td>Rainbow 掛掉才切；約每 10–25 分鐘</td>
+        <td>RainViewer 公開觀測回波</td>
+        <td>氣象署資料抓不到才切</td>
       </tr>
       <tr>
         <td>縣市降雨機率<br>（面板第二行）</td>
@@ -338,15 +338,15 @@
   </table>
   <div class="note">
     <div class="h">背後怎麼運作</div>
-    <p>Rainbow 的 API 金鑰不能放進網頁原始碼（超量會計費），所以中間隔一個 Cloudflare Worker 代理：網頁打 Worker、Worker 拿著金鑰去打 Rainbow、只放行本站來源。氣象署那條走 GitHub Actions 排程抓圖存分支，當 Rainbow 掛掉時的後備。</p>
+    <p>氣象署的觀測圖和未來 1 小時預報都是公開資料，不用金鑰。GitHub Actions 排程定期去抓、處理成網頁能直接讀的小檔案，存進 repo 的一個資料分支，網頁再從那裡讀。</p>
   </div>
 </section>
 
 <section>
   <h2><span class="n">07</span>已知限制</h2>
   <ul class="tips">
-    <li><b>未來預報是 AI nowcast，不是氣象署官方。</b>前 30–60 分鐘可信，90 分鐘後越來越糊（App 標「僅供參考」）。台灣衛星覆蓋好，實務夠用，但別當聖旨。</li>
-    <li><b>Rainbow 掛掉就沒有未來。</b>退回氣象署觀測時，時間軸只剩過去，靠自己外推。看頂端標籤確認目前用哪個源。</li>
+    <li><b>未來預報只到 1 小時。</b>超過 1 小時只剩縣市級、每 3 小時一格的粗略降雨機率，不分路段。規劃長途路線時，遠處只能當參考。</li>
+    <li><b>觀測雷達抓不到時退到 RainViewer。</b>看頂端標籤確認目前用哪個源。</li>
     <li><b>縣市降雨機率是「文字預報」不是雷達。</b>縣市級、每 3 小時一格、約 6 小時更新。跟上面的雷達時間尺度完全不同，別混用。</li>
     <li><b>剛開 App 時橘色推算點可能不出現。</b>手機要持續移動幾秒才會回報行進方向和速度。App 會顯示一行說明。</li>
     <li><b>iOS Safari 不支援螢幕常亮。</b>用系統設定的「自動鎖定」替代。</li>

@@ -1,12 +1,14 @@
+# 名稱沿用 rainbow-proxy（2026-09-11 移除 Rainbow 預報後只剩排程觸發用途；
+# 改名會換掉部署網址，UptimeRobot 監控的 URL 要跟著改，暫不動）。
 name = "rainbow-proxy"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 
 # 金鑰不放這裡。用：
-#   wrangler secret put RAINBOW_KEY      （Rainbow API 金鑰）
 #   wrangler secret put GH_DISPATCH_TOKEN （GitHub fine-grained PAT，Actions: read+write，只給這個 repo）
 #   wrangler secret put CRON_KEY          （自訂隨機字串；外部監控服務打 /cron?key=… 用）
 # 本機測試放 worker/.dev.vars（已 gitignore）
+# RAINBOW_KEY 已不再使用（Rainbow 預報移除），舊 secret 可留可刪，刪除：wrangler secret delete RAINBOW_KEY
 
 # 定時觸發 fetch-cwa.yml 抓資料。三層：
 #   1. 外部監控服務（UptimeRobot / cron-job.org）每 5–10 分打 GET /cron?key=CRON_KEY  ← 主力
