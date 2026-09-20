@@ -74,9 +74,13 @@
   .me-head{position:absolute;left:50%;top:50%;width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;
     border-bottom:16px solid var(--accent);transform-origin:50% 100%;margin:-20px 0 0 -7px;filter:drop-shadow(0 0 1px #fff)}
   .ghost-dot{width:13px;height:13px;background:#ff8f00cc;border:2px dashed #fff;border-radius:50%;box-shadow:0 0 0 1px #0005}
+  .ghost-dot-route{border-style:solid}   /* 沿路線推＝實線外框；虛線＝照方位拉直線的粗估 */
   .ghost-label{background:#ff8f00;color:#fff;font-size:10.5px;font-weight:800;padding:1px 5px;border-radius:5px;white-space:nowrap;
+    width:max-content;   /* divIcon 容器只有 13px 寬，不給 max-content 的話底色只蓋住 13px、文字整個溢出去 */
     transform:translate(9px,-7px);box-shadow:0 1px 4px #0005}
   .ghost-label-mini{padding:0 3px;font-size:9px;transform:translate(8px,-6px);opacity:.9}
+  /* 靠近螢幕右緣時把標籤翻到點的左邊，否則 nowrap 的長標籤會被切掉 */
+  .ghost-label-left{transform:translate(calc(-100% - 3px),-7px)}
 
   .leaflet-control-attribution{font-size:9px}
   body.dark-base .base-osm{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9) saturate(.4)}
@@ -108,7 +112,7 @@
   <div id="forecast" hidden></div>
   <div id="hint">
     <span class="k" style="background:#1d6fe0"></span>你的位置
-    <span class="k" style="background:#ff8f00"></span>推算的前方位置。
+    <span class="k" style="background:#ff8f00"></span>推算的前方位置（實心圈＝沿路線推，虛線圈＝直線粗估）。
     <b id="modehint">播放時間軸看雨帶往哪移動。</b>
     <span id="ghosthint" hidden>📴 手機還沒回報行進方向／速度（通常要持續移動幾秒），暫時不顯示前方推算點。</span>
   </div>
@@ -141,6 +145,12 @@ const RADAR_OPACITY = 0.62;
 const RADAR_REFRESH_MS = 180000;   // 每 3 分重抓
 const FORECAST_REFRESH_MS = 900000; // 每 15 分重抓鄉鎮預報（CWA 約 6 小時更新一次）
 const GHOST_MINS = [10, 20, 30];   // 前方位置參考點（分鐘）
+/* 「沿路線推算前方點」的吸附參數。SNAP_MAX_M＝離路線多遠還算騎在線上：
+   太小的話 GPS 飄一下就掉回直線推算，太大會把隔壁那條街誤認成在路線上。
+   實際門檻會再取 max(SNAP_MAX_M, 定位精度)，收訊差時才不會一直掉出來。 */
+const SNAP_MAX_M    = 150;
+const SNAP_WINDOW_M = 2000;    // 優先在上次吸附位置前後這個範圍找（河濱路線兩岸只隔幾百公尺，全線找會在對岸跳來跳去）
+const SNAP_STALE_MS = 90000;   // 上次吸附超過這麼久就當作重新上路，改回全線搜尋
 const RV_MAX_NATIVE_ZOOM = 7;
 const QPF_MAX_AGE_MS = 2400000;    // 40 分：qpf 資料超過就算過期（跟 Android app 一致）
 const QPF_REFRESH_MS = 600000;     // 每 10 分重抓 qpf.json（CWA 約 10–15 分更新）
@@ -292,6 +302,8 @@ function destPoint(lat, lon, bearingDeg, distM){
   return [la2*180/Math.PI, ((lo2*180/Math.PI)+540)%360 - 180];
 }
 function clearGhosts(){ ghostMarkers.forEach(m => map.removeLayer(m)); ghostMarkers = []; }
+/* 前方推算點。選了路線、人也真的騎在線上時就沿著路線往前推（過彎才不會推到河對岸去），
+   其他情況照目前方位拉直線。路線幾何（吸附、沿線取點）在下面「固定路線」那一段。 */
 function updateGhosts(){
   clearGhosts();
   const p = state.pos;
@@ -301,16 +313,32 @@ function updateGhosts(){
     return;
   }
   if(gh) gh.hidden = true;
-  GHOST_MINS.forEach((min, i) => {
+
+  const snap = routeKey ? snapToRoute(p.lat, p.lon, p.acc) : null;
+  // 路線可以逆向騎：行進方位跟所在線段的方位差超過 90 度，就往路線的起點方向推。
+  const dir = snap && Math.abs(((p.heading - snap.bearing) + 540) % 360 - 180) > 90 ? -1 : 1;
+
+  const spots = GHOST_MINS.map(min => {
     const dist = p.speed * min * 60;
-    const [glat, glon] = destPoint(p.lat, p.lon, p.heading, dist);
+    // 騎到快接近路線頭尾時，推出去的點會落在路線之外（路線不是封閉圈）。
+    // 那一點就改用直線推估，不要整個不畫 —— 無聲消失比粗估更難懂。
+    const onLine = snap ? pointAlongRoute(snap.alongM + dir * dist) : null;
+    return {min, dist, onLine: !!onLine,
+            ll: onLine || destPoint(p.lat, p.lon, p.heading, dist)};
+  });
+  spots.forEach((s, i) => {
     // 只有最遠那點掛完整標籤，其他只留小小的分鐘數 —— 手機窄螢幕、低 zoom 時三個 nowrap 標籤會疊在一起
-    const last = i === GHOST_MINS.length - 1;
+    const last = i === spots.length - 1;
+    // 完整標籤約 130px 寬，落在螢幕右緣會被切掉 → 翻到點的左邊。
+    // mini 標籤只有十幾 px，不會有這問題，不用翻。
+    const flip = last && map.latLngToContainerPoint(s.ll).x > map.getSize().x - 150
+      ? ' ghost-label-left' : '';
     const label = last
-      ? '<div class="ghost-label">+' + min + '分 · ' + (dist/1000).toFixed(1) + ' km</div>'
-      : '<div class="ghost-label ghost-label-mini">' + min + '</div>';
-    const m = L.marker([glat, glon], {icon: L.divIcon({className:'', html:
-      '<div class="ghost-dot"></div>' + label,
+      ? '<div class="ghost-label' + flip + '">+' + s.min + '分 · ' + (s.dist/1000).toFixed(1) + ' km'
+        + (s.onLine ? ' · 沿路線' : '') + '</div>'
+      : '<div class="ghost-label ghost-label-mini">' + s.min + '</div>';
+    const m = L.marker(s.ll, {icon: L.divIcon({className:'', html:
+      '<div class="ghost-dot' + (s.onLine ? ' ghost-dot-route' : '') + '"></div>' + label,
       iconSize:[13,13], iconAnchor:[7,7]}), zIndexOffset:900, interactive:false}).addTo(map);
     ghostMarkers.push(m);
   });
@@ -404,6 +432,81 @@ async function loadRoute(key){
   routeCache[key] = d;
   return d;
 }
+/* ── 路線幾何：累積距離、投影吸附、沿線取點 ──
+   給「沿路線推算前方點」用。路線是靜態檔，累積距離算一次就掛在 routeCache 上不重算。 */
+let routeSnap = null;   // {alongM, ms} 上次成功吸附的位置，用來限縮下次搜尋範圍
+
+function routeGeom(key){
+  const d = routeCache[key];
+  if(!d || !d.points || d.points.length < 2) return null;
+  if(!d._geom){
+    const pts = d.points, cum = new Float64Array(pts.length);
+    for(let i = 1; i < pts.length; i++) cum[i] = cum[i-1] + haversineM(pts[i-1], pts[i]);
+    d._geom = {pts, cum, totalM: cum[cum.length-1]};
+  }
+  return d._geom;
+}
+/* 把 (lat,lon) 投影到線段 a→b 上，回 {t, distM}：t 是段上比例 0–1，distM 是垂直距離。
+   用等距圓柱近似把經緯度換成公尺——線段最長也才幾百公尺，這個尺度下誤差可忽略。 */
+function projectOnSeg(lat, lon, a, b){
+  const kx = Math.cos(lat * Math.PI/180) * 111320, ky = 110540;
+  const ax = (a[1]-lon)*kx, ay = (a[0]-lat)*ky;    // 以騎士為原點，所以騎士在 (0,0)
+  const bx = (b[1]-lon)*kx, by = (b[0]-lat)*ky;
+  const dx = bx-ax, dy = by-ay, len2 = dx*dx + dy*dy;
+  let t = len2 > 0 ? -(ax*dx + ay*dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return {t, distM: Math.hypot(ax + t*dx, ay + t*dy)};
+}
+function bearingBetween(a, b){
+  const toRad = d => d*Math.PI/180;
+  const la1 = toRad(a[0]), la2 = toRad(b[0]), dLon = toRad(b[1]-a[1]);
+  const y = Math.sin(dLon)*Math.cos(la2);
+  const x = Math.cos(la1)*Math.sin(la2) - Math.sin(la1)*Math.cos(la2)*Math.cos(dLon);
+  return (Math.atan2(y, x)*180/Math.PI + 360) % 360;
+}
+/* 人在不在目前這條路線上？在的話回 {alongM（距起點幾公尺）, distM（離線多遠）, bearing（該段方位）}。
+   先只找上次吸附位置附近，找不到才退回全線——淡水河兩岸的自行車道只隔幾百公尺，
+   純粹找全線最近點會讓前方推算點在對岸跳來跳去。 */
+function snapToRoute(lat, lon, accM){
+  const g = routeGeom(routeKey);
+  if(!g) return null;
+  const maxDistM = Math.min(300, Math.max(SNAP_MAX_M, accM || 0));
+  const ranges = [];
+  if(routeSnap && (Date.now() - routeSnap.ms) < SNAP_STALE_MS){
+    ranges.push([routeSnap.alongM - SNAP_WINDOW_M, routeSnap.alongM + SNAP_WINDOW_M]);
+  }
+  ranges.push([-Infinity, Infinity]);
+  for(const [lo, hi] of ranges){
+    let best = null;
+    for(let i = 0; i + 1 < g.pts.length; i++){
+      if(g.cum[i+1] < lo || g.cum[i] > hi) continue;
+      const pr = projectOnSeg(lat, lon, g.pts[i], g.pts[i+1]);
+      if(!best || pr.distM < best.distM) best = {i, t: pr.t, distM: pr.distM};
+    }
+    if(best && best.distM <= maxDistM){
+      const alongM = g.cum[best.i] + (g.cum[best.i+1] - g.cum[best.i]) * best.t;
+      routeSnap = {alongM, ms: Date.now()};
+      return {alongM, distM: best.distM, bearing: bearingBetween(g.pts[best.i], g.pts[best.i+1])};
+    }
+  }
+  return null;   // routeSnap 不清掉，讓它自己過期：過隧道、GPS 掉一下還能接回原來的位置
+}
+/* 路線上距起點 alongM 公尺的座標。兩條路線都不是封閉圈（頭尾差 4–18 km），
+   所以超出頭尾就回 null，不繞回起點。 */
+function pointAlongRoute(alongM){
+  const g = routeGeom(routeKey);
+  if(!g || alongM < 0 || alongM > g.totalM) return null;
+  let lo = 0, hi = g.cum.length - 1;
+  while(lo + 1 < hi){
+    const mid = (lo + hi) >> 1;
+    if(g.cum[mid] <= alongM) lo = mid; else hi = mid;
+  }
+  const span = g.cum[hi] - g.cum[lo];
+  const t = span > 0 ? (alongM - g.cum[lo]) / span : 0;
+  return [g.pts[lo][0] + (g.pts[hi][0]-g.pts[lo][0])*t,
+          g.pts[lo][1] + (g.pts[hi][1]-g.pts[lo][1])*t];
+}
+
 function clearRouteLayer(){
   if(routeLayerGroup){ map.removeLayer(routeLayerGroup); routeLayerGroup = null; }
 }
@@ -453,6 +556,7 @@ function cycleRoutePref(){
 }
 async function setRoutePref(key){
   routeKey = key;
+  routeSnap = null;          // 換路線＝舊的沿線位置作廢，不然新路線會拿舊的距離當搜尋範圍
   try{ key ? localStorage.setItem('routeKey', key) : localStorage.removeItem('routeKey'); }catch(_){}
   reflectRouteBtn();
   if(!key){ clearRouteLayer(); document.getElementById('chip-route').hidden = true; renderLegend(); return; }
