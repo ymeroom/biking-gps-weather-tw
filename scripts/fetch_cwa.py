@@ -5,7 +5,8 @@
   灰底透明化只留彩色回波，縮到 1800px，保留最近 18 張做動畫。
 - 預報：F-D0047-089 縣市層級「3小時降雨機率 / 天氣現象」，需 CWA_KEY。
 """
-import os, io, json, glob, math, shutil, datetime, urllib.request, urllib.parse
+import os, io, json, glob, math, shutil, time, datetime, http.client
+import urllib.request, urllib.parse, urllib.error
 import numpy as np
 from PIL import Image
 
@@ -19,10 +20,25 @@ S3_RADAR = "https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0
 os.makedirs(f"{OUT}/radar", exist_ok=True)
 
 
-def http_get(url, timeout=40):
+def http_get(url, timeout=40, tries=3):
+    # CWA / S3 偶發 timeout、connection reset、DNS 失敗、5xx，重試幾次免得整輪失敗寄信
     req = urllib.request.Request(url, headers={"User-Agent": "biking-gps-weather-tw/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read(), dict(r.headers)
+    for i in range(1, tries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read(), dict(r.headers)
+        except urllib.error.HTTPError as e:          # 4xx 重試也沒用（金鑰錯等）
+            if e.code < 500 or i == tries:
+                raise
+            err = e
+        except (OSError, http.client.HTTPException) as e:   # URLError / timeout / reset 都是 OSError
+            if i == tries:
+                raise
+            err = e
+        # 只印 host，不印 URL（含 CWA_KEY）
+        print(f"http_get: {urllib.parse.urlsplit(url).netloc} try {i} failed "
+              f"({type(err).__name__}: {err}), retry in {5 * i}s")
+        time.sleep(5 * i)
 
 
 def ts_from_lastmod(headers):

@@ -41,7 +41,14 @@ jobs:
           git init -q
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config http.postBuffer 157286400   # 曾遇 "unable to rewind rpc post data"
           git add -A
           git commit -q -m "cwa data $(date -u +%FT%TZ)"
           git branch -M data
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" data
+          # GitHub 偶發 500 / commit_refs / RPC 斷線，重試幾次
+          for i in 1 2 3; do
+            git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" data && exit 0
+            echo "push 第 $i 次失敗，$((10 * i)) 秒後重試"
+            sleep $((10 * i))
+          done
+          exit 1
